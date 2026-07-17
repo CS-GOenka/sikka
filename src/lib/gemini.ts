@@ -10,7 +10,7 @@ if (!geminiApiKey) {
 // expose this key with a NEXT_PUBLIC_ prefix.
 export const gemini = new GoogleGenAI({ apiKey: geminiApiKey });
 
-const MERCHANT_CATEGORIES = [
+export const MERCHANT_CATEGORIES = [
   "Food & Dining",
   "Groceries",
   "Transport",
@@ -25,7 +25,10 @@ const MERCHANT_CATEGORIES = [
 
 export type MerchantCategory = (typeof MERCHANT_CATEGORIES)[number];
 
-export async function categorizeMerchant(payee: string): Promise<MerchantCategory> {
+// Returns category=null when Gemma's response doesn't cleanly match one of
+// the fixed categories, so callers can flag it for review instead of
+// silently mislabeling it.
+export async function categorizeMerchant(payee: string): Promise<MerchantCategory | null> {
   const response = await gemini.models.generateContent({
     model: "gemma-4-26b-a4b-it",
     contents: `Classify the merchant/payee name below into exactly one of these categories:
@@ -40,5 +43,5 @@ Respond with only the category name, nothing else.`,
   if (category && (MERCHANT_CATEGORIES as readonly string[]).includes(category)) {
     return category as MerchantCategory;
   }
-  return "Other";
+  return null;
 }
