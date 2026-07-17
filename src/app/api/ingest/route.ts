@@ -44,5 +44,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  console.log("Inserted raw message:", message);
   return NextResponse.json({ status: "OK" });
 }
