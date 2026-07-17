@@ -14,11 +14,13 @@ export async function POST(request: NextRequest) {
   }
 
   const message = (body as { message?: unknown })?.message;
-  if (typeof message !== "string") {
-    return NextResponse.json(
-      { status: "ERROR", error: "Expected a JSON body with a string 'message' field" },
-      { status: 400 }
-    );
+  if (typeof message !== "string" || message.trim().length === 0) {
+    return NextResponse.json({ status: "OK" });
+  }
+
+  const sensitivePatterns = [/otp/i, /one-time password/i, /do not disclose/i];
+  if (sensitivePatterns.some((pattern) => pattern.test(message))) {
+    return NextResponse.json({ status: "OK" });
   }
 
   try {
