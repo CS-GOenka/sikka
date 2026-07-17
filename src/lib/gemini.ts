@@ -27,7 +27,7 @@ export type MerchantCategory = (typeof MERCHANT_CATEGORIES)[number];
 
 export async function categorizeMerchant(payee: string): Promise<MerchantCategory> {
   const response = await gemini.models.generateContent({
-    model: "gemma-4-31b-it",
+    model: "gemma-4-26b-a4b-it",
     contents: `Classify the merchant/payee name below into exactly one of these categories:
 ${MERCHANT_CATEGORIES.join(", ")}
 
