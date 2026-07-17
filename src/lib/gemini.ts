@@ -12,14 +12,16 @@ export const gemini = new GoogleGenAI({ apiKey: geminiApiKey });
 
 export const MERCHANT_CATEGORIES = [
   "Food & Dining",
-  "Groceries",
-  "Transport",
-  "Shopping",
-  "Bills & Utilities",
-  "Entertainment",
-  "Travel",
+  "Groceries/Quick Commerce",
   "Subscriptions",
-  "Transfer",
+  "Transport & Fuel",
+  "Shopping",
+  "Healthcare",
+  "Travel",
+  "Utilities & Bills",
+  "Rent",
+  "Person-to-Person",
+  "Cash Withdrawal",
   "Other",
 ] as const;
 
