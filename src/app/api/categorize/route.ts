@@ -2,13 +2,27 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { categorizeMerchant } from "@/lib/gemini";
 
+const INVESTMENT_PAYEE_MARKERS = ["zerodha", "groww", "upstox", "angelone", "angel one"];
+
+function isInvestmentTransaction(row: { payment_method: string; note: string | null; payee: string | null }): boolean {
+  if (row.payment_method === "ach" && row.note && /nse\s*cleari/i.test(row.note)) {
+    return true;
+  }
+  if (row.payee) {
+    const lower = row.payee.toLowerCase();
+    if (INVESTMENT_PAYEE_MARKERS.some((marker) => lower.includes(marker))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function POST() {
   const { data: rows, error } = await supabase
     .from("transactions")
-    .select("id, payee, payment_method")
+    .select("id, payee, payment_method, note")
     .in("type", ["debit", "credit"])
-    .not("payee", "is", null)
-    .is("category", null);
+    .is("category_id", null);
 
   if (error) {
     console.error("Failed to fetch uncategorized transactions:", {
@@ -20,68 +34,113 @@ export async function POST() {
     return NextResponse.json({ status: "ERROR", error: error.message }, { status: 500 });
   }
 
+  const { data: categories, error: categoriesError } = await supabase
+    .from("categories")
+    .select("id, name");
+  if (categoriesError) {
+    console.error("Failed to fetch categories:", categoriesError);
+    return NextResponse.json({ status: "ERROR", error: categoriesError.message }, { status: 500 });
+  }
+  const investmentsCategory = categories.find((c) => c.name === "Investments");
+  if (!investmentsCategory) {
+    return NextResponse.json(
+      { status: "ERROR", error: "Investments category not found in categories table" },
+      { status: 500 }
+    );
+  }
+
   const { data: known, error: knownError } = await supabase
     .from("merchant_categories")
-    .select("payee, category");
+    .select("payee, category_id");
 
   if (knownError) {
     console.error("Failed to fetch merchant_categories:", knownError);
     return NextResponse.json({ status: "ERROR", error: knownError.message }, { status: 500 });
   }
 
-  const knownCategories = new Map((known ?? []).map((r) => [r.payee, r.category]));
+  const knownCategories = new Map((known ?? []).map((r) => [r.payee, r.category_id]));
 
   const results: {
     id: number;
-    payee: string;
-    category: string | null;
+    payee: string | null;
+    categoryId: number | null;
     needsReview: boolean;
-    source: "cache" | "llm" | "llm_uncertain";
+    source: "hardcoded" | "cache" | "llm" | "llm_uncertain" | "no_payee";
   }[] = [];
-  const failures: { id: number; payee: string; error: string }[] = [];
+  const failures: { id: number; payee: string | null; error: string }[] = [];
 
   for (const row of rows) {
-    const payee = row.payee as string;
-    let category: string | null = null;
+    const payee = row.payee as string | null;
+    let categoryId: number | null = null;
     let needsReview = true;
-    let source: "cache" | "llm" | "llm_uncertain" = "llm_uncertain";
+    let source: "hardcoded" | "cache" | "llm" | "llm_uncertain" | "no_payee" = "no_payee";
 
-    const cachedCategory = knownCategories.get(payee);
-    if (cachedCategory) {
-      category = cachedCategory;
+    if (isInvestmentTransaction(row)) {
+      categoryId = investmentsCategory.id;
       needsReview = false;
-      source = "cache";
-    } else {
-      try {
-        category = await categorizeMerchant(payee);
-        needsReview = category === null;
-        source = category === null ? "llm_uncertain" : "llm";
-
-        if (category !== null) {
-          const confidenceSource = row.payment_method === "mandate" ? "mandate" : "llm";
-          const { error: upsertError } = await supabase.from("merchant_categories").upsert(
-            { payee, category, confidence_source: confidenceSource, updated_at: new Date().toISOString() },
-            { onConflict: "payee" }
-          );
-          if (upsertError) {
-            console.error(`Failed to cache category for payee "${payee}":`, upsertError);
-          } else {
-            knownCategories.set(payee, category);
-          }
+      source = "hardcoded";
+      if (payee) {
+        const { error: upsertError } = await supabase.from("merchant_categories").upsert(
+          {
+            payee,
+            category_id: categoryId,
+            confidence_source: "hardcoded",
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "payee" }
+        );
+        if (upsertError) {
+          console.error(`Failed to cache hardcoded category for payee "${payee}":`, upsertError);
+        } else {
+          knownCategories.set(payee, categoryId);
         }
-      } catch (err) {
-        console.error(`Failed to categorize transaction ${row.id} (payee: ${payee}):`, err);
-        failures.push({
-          id: row.id,
-          payee,
-          error: err instanceof Error ? err.message : "Unknown error",
-        });
+      }
+    } else if (payee) {
+      const cachedCategoryId = knownCategories.get(payee);
+      if (cachedCategoryId) {
+        categoryId = cachedCategoryId;
+        needsReview = false;
+        source = "cache";
+      } else {
+        try {
+          const match = await categorizeMerchant(payee);
+          categoryId = match ? match.id : null;
+          needsReview = match === null;
+          source = match === null ? "llm_uncertain" : "llm";
+
+          if (match !== null) {
+            const confidenceSource = row.payment_method === "mandate" ? "mandate" : "llm";
+            const { error: upsertError } = await supabase.from("merchant_categories").upsert(
+              {
+                payee,
+                category_id: match.id,
+                confidence_source: confidenceSource,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "payee" }
+            );
+            if (upsertError) {
+              console.error(`Failed to cache category for payee "${payee}":`, upsertError);
+            } else {
+              knownCategories.set(payee, match.id);
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to categorize transaction ${row.id} (payee: ${payee}):`, err);
+          failures.push({
+            id: row.id,
+            payee,
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
       }
     }
+    // else: no payee and no hardcoded rule matched - leave needs_category_review=true,
+    // category_id=null rather than guessing.
 
     const { error: updateError } = await supabase
       .from("transactions")
-      .update({ category, needs_category_review: needsReview })
+      .update({ category_id: categoryId, needs_category_review: needsReview })
       .eq("id", row.id);
 
     if (updateError) {
@@ -90,7 +149,7 @@ export async function POST() {
       continue;
     }
 
-    results.push({ id: row.id, payee, category, needsReview, source });
+    results.push({ id: row.id, payee, categoryId, needsReview, source });
   }
 
   return NextResponse.json({

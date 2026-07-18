@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { MERCHANT_CATEGORIES } from "@/lib/gemini";
 
 export async function POST(request: NextRequest) {
   let body: unknown;
@@ -15,7 +14,7 @@ export async function POST(request: NextRequest) {
   }
 
   const transactionId = (body as { transactionId?: unknown })?.transactionId;
-  const category = (body as { category?: unknown })?.category;
+  const categoryName = (body as { category?: unknown })?.category;
 
   if (typeof transactionId !== "number") {
     return NextResponse.json(
@@ -23,11 +22,27 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  if (typeof category !== "string" || !(MERCHANT_CATEGORIES as readonly string[]).includes(category)) {
+  if (typeof categoryName !== "string") {
+    return NextResponse.json(
+      { status: "ERROR", error: "Expected a string 'category' field naming a category" },
+      { status: 400 }
+    );
+  }
+
+  const { data: category, error: categoryError } = await supabase
+    .from("categories")
+    .select("id, name")
+    .eq("name", categoryName)
+    .single();
+
+  if (categoryError || !category) {
+    const { data: allCategories } = await supabase.from("categories").select("name");
     return NextResponse.json(
       {
         status: "ERROR",
-        error: `Expected 'category' to be one of: ${MERCHANT_CATEGORIES.join(", ")}`,
+        error: `Unknown category "${categoryName}". Valid categories: ${(allCategories ?? [])
+          .map((c) => c.name)
+          .join(", ")}`,
       },
       { status: 400 }
     );
@@ -58,7 +73,7 @@ export async function POST(request: NextRequest) {
   const { error: upsertError } = await supabase.from("merchant_categories").upsert(
     {
       payee: transaction.payee,
-      category,
+      category_id: category.id,
       confidence_source: "manual",
       updated_at: new Date().toISOString(),
     },
@@ -72,7 +87,7 @@ export async function POST(request: NextRequest) {
 
   const { error: updateError } = await supabase
     .from("transactions")
-    .update({ category, needs_category_review: false })
+    .update({ category_id: category.id, needs_category_review: false })
     .eq("id", transactionId);
 
   if (updateError) {
@@ -84,6 +99,6 @@ export async function POST(request: NextRequest) {
     status: "OK",
     transactionId,
     payee: transaction.payee,
-    category,
+    category: category.name,
   });
 }
