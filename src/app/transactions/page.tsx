@@ -2,6 +2,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
+import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,9 @@ type TransactionRow = {
   currency: string;
   transaction_date: string | null;
   type: string;
+  payment_method: string;
   categories: { name: string } | null;
+  raw_messages: { created_at: string } | null;
 };
 
 function formatAmount(amount: number | null, currency: string, type: string) {
@@ -23,11 +26,40 @@ function formatAmount(amount: number | null, currency: string, type: string) {
   return `${sign}${currency} ${amount.toLocaleString("en-IN")}`;
 }
 
+// transaction_date is date-only (no time component - confirmed against the
+// live schema) and the SMS text itself never carries a time for standard
+// transactions, so the closest real timestamp we have is when the message
+// was received server-side. That's still not the same as the transaction
+// moment (especially for anything caught by the 15-minute reconciliation
+// safety net rather than the instant Shortcut path), so this is labeled
+// "Received" rather than implying transaction-time precision.
+function formatReceived(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default async function TransactionsPage({
   searchParams,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  const endTiming = startTiming("GET /transactions");
+  try {
+    return await renderTransactionsPage(searchParams);
+  } finally {
+    endTiming();
+  }
+}
+
+async function renderTransactionsPage(
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+) {
   const { page: pageParam } = await searchParams;
   const page = Math.max(1, parseInt(Array.isArray(pageParam) ? pageParam[0] : pageParam ?? "1", 10) || 1);
   const from = (page - 1) * PAGE_SIZE;
@@ -36,9 +68,10 @@ export default async function TransactionsPage({
   const [{ data, count, error }, categories] = await Promise.all([
     supabase
       .from("transactions")
-      .select("id, payee, amount, currency, transaction_date, type, categories(name)", {
-        count: "exact",
-      })
+      .select(
+        "id, payee, amount, currency, transaction_date, type, payment_method, categories(name), raw_messages(created_at)",
+        { count: "exact" }
+      )
       .neq("type", "ignored")
       .order("transaction_date", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
@@ -70,9 +103,13 @@ export default async function TransactionsPage({
           <thead className="bg-zinc-50 text-left dark:bg-zinc-900">
             <tr>
               <th className="px-3 py-2 font-medium">Date</th>
+              <th className="px-3 py-2 font-medium" title="When the message was received, not necessarily the exact transaction moment">
+                Received
+              </th>
               <th className="px-3 py-2 font-medium">Payee</th>
               <th className="px-3 py-2 font-medium">Amount</th>
               <th className="px-3 py-2 font-medium">Type</th>
+              <th className="px-3 py-2 font-medium">Method</th>
               <th className="px-3 py-2 font-medium">Category</th>
             </tr>
           </thead>
@@ -81,6 +118,9 @@ export default async function TransactionsPage({
               <tr key={row.id} className="border-t border-zinc-200 dark:border-zinc-800">
                 <td className="whitespace-nowrap px-3 py-2 text-zinc-500">
                   {row.transaction_date ?? "—"}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-zinc-500">
+                  {formatReceived(row.raw_messages?.created_at ?? null)}
                 </td>
                 <td className="px-3 py-2">{row.payee ?? "—"}</td>
                 <td
@@ -95,6 +135,7 @@ export default async function TransactionsPage({
                   {formatAmount(row.amount, row.currency, row.type)}
                 </td>
                 <td className="px-3 py-2 text-zinc-500">{row.type}</td>
+                <td className="px-3 py-2 text-zinc-500">{row.payment_method}</td>
                 <td className="px-3 py-2">
                   <CategoryPicker
                     transactionId={row.id}
@@ -106,7 +147,7 @@ export default async function TransactionsPage({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-center text-zinc-500">
+                <td colSpan={7} className="px-3 py-6 text-center text-zinc-500">
                   No transactions found.
                 </td>
               </tr>
@@ -114,6 +155,9 @@ export default async function TransactionsPage({
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-zinc-400">
+        &ldquo;Received&rdquo; is when the message reached the server, not necessarily the exact transaction time.
+      </p>
 
       <div className="flex items-center justify-between text-sm">
         <Link

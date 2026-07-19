@@ -3,10 +3,20 @@ import { after } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { classify } from "@/lib/classify";
 import { categorizeTransaction } from "@/lib/categorize";
+import { startTiming } from "@/lib/timing";
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  const endTiming = startTiming("POST /api/ingest");
+  try {
+    return await handleIngest(request);
+  } finally {
+    endTiming();
+  }
+}
+
+async function handleIngest(request: NextRequest): Promise<NextResponse> {
   let body: unknown;
   try {
     body = await request.json();

@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
+import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +14,25 @@ type ReviewRow = {
   type: string;
   note: string | null;
   categories: { name: string } | null;
+  raw_messages: { message: string } | null;
 };
 
 export default async function ReviewPage() {
+  const endTiming = startTiming("GET /review");
+  try {
+    return await renderReviewPage();
+  } finally {
+    endTiming();
+  }
+}
+
+async function renderReviewPage() {
   const [{ data, error }, categories] = await Promise.all([
     supabase
       .from("transactions")
-      .select("id, payee, amount, currency, transaction_date, type, note, categories(name)")
+      .select(
+        "id, payee, amount, currency, transaction_date, type, note, categories(name), raw_messages(message)"
+      )
       .or("needs_category_review.eq.true,and(type.in.(debit,credit),category_id.is.null)")
       .order("transaction_date", { ascending: false, nullsFirst: false })
       .returns<ReviewRow[]>(),
@@ -45,14 +58,19 @@ export default async function ReviewPage() {
         {rows.map((row) => (
           <div
             key={row.id}
-            className="flex flex-col gap-2 rounded border border-zinc-200 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800"
+            className="flex flex-col gap-2 rounded border border-zinc-200 p-4 sm:flex-row sm:items-start sm:justify-between dark:border-zinc-800"
           >
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-1">
               <span className="font-medium">{row.payee ?? "(no payee)"}</span>
               <span className="text-sm text-zinc-500">
                 {row.transaction_date ?? "—"} · {row.type} · {row.currency} {row.amount ?? "—"}
               </span>
               {row.note && <span className="text-xs text-zinc-400">{row.note}</span>}
+              {row.raw_messages?.message && (
+                <p className="mt-1 max-w-xl whitespace-pre-wrap rounded bg-zinc-50 p-2 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                  {row.raw_messages.message}
+                </p>
+              )}
             </div>
             <CategoryPicker
               transactionId={row.id}
