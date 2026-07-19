@@ -34,12 +34,14 @@ from datetime import datetime, timedelta
 DB_PATH = os.path.expanduser("~/Library/Messages/chat.db")
 INGEST_URL = "https://sikka-mauve.vercel.app/api/ingest"
 TARGET = "icici bank"
-LOOKBACK_DAYS = 3
+LOOKBACK_DAYS = 7
 
 SENSITIVE_PATTERNS = [
     re.compile(r"otp", re.I),
-    re.compile(r"one-time password", re.I),
-    re.compile(r"do not disclose", re.I),
+    re.compile(r"one.?time.?password", re.I),
+    re.compile(r"do not (disclose|share)", re.I),
+    re.compile(r"verification code", re.I),
+    re.compile(r"security code", re.I),
 ]
 
 

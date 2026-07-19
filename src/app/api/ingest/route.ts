@@ -23,7 +23,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "OK" });
   }
 
-  const sensitivePatterns = [/otp/i, /one-time password/i, /do not disclose/i];
+  const sensitivePatterns = [
+    /otp/i,
+    /one.?time.?password/i,
+    /do not (disclose|share)/i,
+    /verification code/i,
+    /security code/i,
+  ];
   if (sensitivePatterns.some((pattern) => pattern.test(message))) {
     return NextResponse.json({ status: "OK" });
   }
