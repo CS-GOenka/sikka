@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { classify } from "@/lib/classify";
 import { categorizeTransaction } from "@/lib/categorize";
+import { tryResolveRefundReference } from "@/lib/refundResolution";
 import { startTiming } from "@/lib/timing";
 
 export const maxDuration = 60;
@@ -146,9 +147,24 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   if (transaction.type === "debit" || transaction.type === "credit") {
     after(async () => {
       try {
+        let payee = classified.payee;
+        if (!payee) {
+          // Payee-less refund/reversal messages (e.g. "...as reversal of
+          // transaction with UPI: 654194353908") can often be resolved
+          // automatically by matching that reference number back to the
+          // original transaction it refers to.
+          const refundOutcome = await tryResolveRefundReference({
+            id: transaction.id,
+            payee,
+            raw_message_id: rawMessageId,
+          });
+          if (refundOutcome.resolved && refundOutcome.matchedPayee) {
+            payee = refundOutcome.matchedPayee;
+          }
+        }
         await categorizeTransaction({
           id: transaction.id,
-          payee: classified.payee,
+          payee,
           payment_method: classified.paymentMethod,
           note: classified.note,
         });
