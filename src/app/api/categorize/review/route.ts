@@ -61,28 +61,26 @@ export async function POST(request: NextRequest) {
       { status: 404 }
     );
   }
-  if (!transaction.payee) {
-    return NextResponse.json(
-      { status: "ERROR", error: `Transaction ${transactionId} has no payee to categorize` },
-      { status: 400 }
-    );
-  }
 
   // Manual confirmation always wins: this correction applies to every future
   // transaction from this merchant, not just the one being reviewed here.
-  const { error: upsertError } = await supabase.from("merchant_categories").upsert(
-    {
-      payee: transaction.payee,
-      category_id: category.id,
-      confidence_source: "manual",
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "payee" }
-  );
+  // Payee-less transactions (e.g. some IMPS credits) have no merchant name to
+  // key a cache entry on, so just correct the transaction itself.
+  if (transaction.payee) {
+    const { error: upsertError } = await supabase.from("merchant_categories").upsert(
+      {
+        payee: transaction.payee,
+        category_id: category.id,
+        confidence_source: "manual",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "payee" }
+    );
 
-  if (upsertError) {
-    console.error("Failed to upsert merchant_categories:", upsertError);
-    return NextResponse.json({ status: "ERROR", error: upsertError.message }, { status: 500 });
+    if (upsertError) {
+      console.error("Failed to upsert merchant_categories:", upsertError);
+      return NextResponse.json({ status: "ERROR", error: upsertError.message }, { status: 500 });
+    }
   }
 
   const { error: updateError } = await supabase
