@@ -29,58 +29,69 @@ export async function POST(request: NextRequest) {
   }
 
   // Idempotency: if this exact message was already ingested (a Shortcut
-  // retry, a duplicate SMS delivery, or a reconciliation re-send), skip
-  // re-inserting it rather than creating a duplicate transaction. Compares
-  // both with and without a trailing period, since different extraction
-  // paths (plain `text` column vs decoded `attributedBody`) have been
-  // observed to disagree on that one trailing character for otherwise
-  // identical messages.
+  // retry, a duplicate SMS delivery, or a reconciliation re-send), don't
+  // create a second raw_messages row. Compares both with and without a
+  // trailing period, since different extraction paths (plain `text` column
+  // vs decoded `attributedBody`) have been observed to disagree on that one
+  // trailing character for otherwise identical messages.
+  //
+  // Important: a matching raw_messages row does NOT necessarily mean this
+  // message was fully processed - if the transaction insert below ever
+  // fails (e.g. a transient cold-start hiccup), the raw message is safely
+  // stored but has no transaction yet. So we only short-circuit here if a
+  // transaction already exists too; otherwise we resume processing using
+  // the existing raw_messages row instead of skipping it, so a retry can
+  // never leave a message permanently unclassified.
   const trimmed = message.trim();
   const dedupVariants = trimmed.endsWith(".")
     ? [trimmed, trimmed.slice(0, -1)]
     : [trimmed, `${trimmed}.`];
-  const { data: existing, error: existingError } = await supabase
+  const { data: existingRows, error: existingError } = await supabase
     .from("raw_messages")
-    .select("id")
+    .select("id, transactions(id)")
     .in("message", dedupVariants)
     .limit(1);
   if (existingError) {
     console.error("Failed to check for duplicate raw message:", existingError);
   }
-  if (existing && existing.length > 0) {
+  const existing = existingRows?.[0];
+  if (existing && Array.isArray(existing.transactions) && existing.transactions.length > 0) {
     return NextResponse.json({ status: "OK" });
   }
 
   let rawMessageId: number;
-  try {
-    const { data, error } = await supabase
-      .from("raw_messages")
-      .insert({ message })
-      .select("id")
-      .single();
+  if (existing) {
+    rawMessageId = existing.id;
+  } else {
+    try {
+      const { data, error } = await supabase
+        .from("raw_messages")
+        .insert({ message })
+        .select("id")
+        .single();
 
-    if (error || !data) {
-      console.error("Supabase insert into raw_messages failed:", {
-        message: error?.message,
-        code: error?.code,
-        details: error?.details,
-        hint: error?.hint,
-      });
+      if (error || !data) {
+        console.error("Supabase insert into raw_messages failed:", {
+          message: error?.message,
+          code: error?.code,
+          details: error?.details,
+          hint: error?.hint,
+        });
+        return NextResponse.json(
+          { status: "ERROR", error: error?.message ?? "Insert returned no row" },
+          { status: 500 }
+        );
+      }
+      rawMessageId = data.id;
+      console.log("Inserted raw message:", message);
+    } catch (err) {
+      console.error("Unexpected error inserting into raw_messages:", err);
       return NextResponse.json(
-        { status: "ERROR", error: error?.message ?? "Insert returned no row" },
+        { status: "ERROR", error: "Unexpected error while inserting message" },
         { status: 500 }
       );
     }
-    rawMessageId = data.id;
-  } catch (err) {
-    console.error("Unexpected error inserting into raw_messages:", err);
-    return NextResponse.json(
-      { status: "ERROR", error: "Unexpected error while inserting message" },
-      { status: 500 }
-    );
   }
-
-  console.log("Inserted raw message:", message);
 
   // Classification is pure regex (no external calls), so it runs inline -
   // every message that reaches here is classified automatically, with no
