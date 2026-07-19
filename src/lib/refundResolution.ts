@@ -73,7 +73,8 @@ export async function tryResolveRefundReference(transaction: {
     .select("id, transactions(id, payee)")
     .ilike("message", `%${referenceNumber}%`)
     .lt("created_at", rawMessage.created_at)
-    .neq("id", rawMessage.id);
+    .neq("id", rawMessage.id)
+    .returns<{ id: number; transactions: { id: number; payee: string | null } | null }[]>();
 
   if (candidatesError) {
     console.error(`Failed to search for refund reference match on transaction ${transaction.id}:`, candidatesError);
@@ -87,7 +88,9 @@ export async function tryResolveRefundReference(transaction: {
     return { resolved: false, reason: "ambiguous_match", referenceNumber };
   }
 
-  const matchedTransaction = candidates[0].transactions?.[0] ?? null;
+  // transactions.raw_message_id is unique, so PostgREST embeds this as a
+  // single object (or null), not an array.
+  const matchedTransaction = candidates[0].transactions ?? null;
   if (!matchedTransaction || !matchedTransaction.payee) {
     return { resolved: false, reason: "match_has_no_payee", referenceNumber };
   }

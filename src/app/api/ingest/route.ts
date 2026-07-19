@@ -72,7 +72,9 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     console.error("Failed to check for duplicate raw message:", existingError);
   }
   const existing = existingRows?.[0];
-  if (existing && Array.isArray(existing.transactions) && existing.transactions.length > 0) {
+  // transactions.raw_message_id is unique, so PostgREST embeds this as a
+  // single object (or null), not an array.
+  if (existing && existing.transactions) {
     return NextResponse.json({ status: "OK" });
   }
 
