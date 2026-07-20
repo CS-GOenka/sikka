@@ -74,7 +74,8 @@
       "Bash(grep -oE 'ICICI Bank[^<]{0,80}' /tmp/rev.html)",
       "Bash(grep -oE 'ICICI Bank[^<]{0,60}' /tmp/prod_rev.html)",
       "Bash(grep -oE 'Failed to load settings[^\"]{0,80}' /tmp/prod_settings.html)",
-      "Bash(grep -oE 'Failed to load settings[^\"]{0,80}' /tmp/settings_check.html)"
+      "Bash(grep -oE 'Failed to load settings[^\"]{0,80}' /tmp/settings_check.html)",
+      "Bash(git log *)"
     ]
   }
 }
