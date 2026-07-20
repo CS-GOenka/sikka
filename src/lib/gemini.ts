@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { unstable_cache } from "next/cache";
 import { supabase } from "@/lib/supabase";
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -20,7 +21,7 @@ export type CategoryOption = {
 // Only "leaf" categories (no children) are offered to the model - parent
 // categories that have children (e.g. "Food & Dining") are just grouping
 // labels, and the more specific child should be picked instead.
-export async function getAssignableCategories(): Promise<CategoryOption[]> {
+async function fetchAssignableCategories(): Promise<CategoryOption[]> {
   const { data: all, error } = await supabase.from("categories").select("id, name, parent_id");
   if (error) {
     throw new Error(`Failed to fetch categories: ${error.message}`);
@@ -35,6 +36,14 @@ export async function getAssignableCategories(): Promise<CategoryOption[]> {
       parentName: c.parent_id ? byId.get(c.parent_id)?.name ?? null : null,
     }));
 }
+
+// Categories change rarely (manual edits only), so this is cached across
+// requests for 5 minutes instead of hitting Supabase on every /transactions
+// and /review page load. A manual category rename/addition can take up to
+// 5 minutes to show up in the picker as a result.
+export const getAssignableCategories = unstable_cache(fetchAssignableCategories, ["assignable-categories"], {
+  revalidate: 300,
+});
 
 // Returns category name=null when Gemma's response doesn't cleanly match one
 // of the current category names, so callers can flag it for review instead

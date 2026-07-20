@@ -59,30 +59,33 @@ export function CategoryPicker({
 
   return (
     <div className="flex flex-col gap-1">
-      <select
-        className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
-        value={currentCategoryName ?? ""}
-        disabled={pending}
-        onChange={handleChange}
-      >
-        <option value="" disabled>
-          {currentCategoryName ?? "Uncategorized"}
-        </option>
-        {ignoreOption && (
-          <optgroup label="Actions">
-            <option value={ignoreOption.name}>Ignore</option>
-          </optgroup>
-        )}
-        {[...grouped.entries()].map(([group, options]) => (
-          <optgroup key={group} label={group}>
-            {options.map((option) => (
-              <option key={option.id} value={option.name}>
-                {option.name}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+      <div className="flex items-center gap-2">
+        <select
+          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
+          value={currentCategoryName ?? ""}
+          disabled={pending}
+          onChange={handleChange}
+        >
+          <option value="" disabled>
+            {currentCategoryName ?? "Uncategorized"}
+          </option>
+          {ignoreOption && (
+            <optgroup label="Actions">
+              <option value={ignoreOption.name}>Ignore</option>
+            </optgroup>
+          )}
+          {[...grouped.entries()].map(([group, options]) => (
+            <optgroup key={group} label={group}>
+              {options.map((option) => (
+                <option key={option.id} value={option.name}>
+                  {option.name}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {pending && <span className="text-xs text-zinc-400">Saving…</span>}
+      </div>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
   );
