@@ -20,8 +20,15 @@ export function CategoryPicker({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // "Ignore" is an action (dismiss from the review queue), not a spending
+  // category - kept out of the alphabetical group list and pinned to its
+  // own group at the top instead, so it doesn't blend in among real
+  // categories.
+  const ignoreOption = categories.find((category) => category.name === "Ignore");
+  const spendCategories = categories.filter((category) => category.name !== "Ignore");
+
   const grouped = new Map<string, CategoryOption[]>();
-  for (const category of categories) {
+  for (const category of spendCategories) {
     const key = category.parentName ?? category.name;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key)!.push(category);
@@ -61,6 +68,11 @@ export function CategoryPicker({
         <option value="" disabled>
           {currentCategoryName ?? "Uncategorized"}
         </option>
+        {ignoreOption && (
+          <optgroup label="Actions">
+            <option value={ignoreOption.name}>Ignore</option>
+          </optgroup>
+        )}
         {[...grouped.entries()].map(([group, options]) => (
           <optgroup key={group} label={group}>
             {options.map((option) => (
