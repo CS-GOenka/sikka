@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
 import { ReportGapButton } from "@/components/ReportGapButton";
+import { StarToggle } from "@/components/StarToggle";
 import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +67,7 @@ async function renderReviewPage() {
           >
             <div className="flex flex-col gap-1">
               <div className="flex flex-wrap items-center gap-1.5">
+                <StarToggle transactionId={row.id} starred={row.starred} />
                 {row.needs_category_review && (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
                     AI uncertain

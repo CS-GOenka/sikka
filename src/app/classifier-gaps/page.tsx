@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { CopyPromptButton } from "@/components/CopyPromptButton";
+import { UndoGapButton } from "@/components/UndoGapButton";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +68,7 @@ export default async function ClassifierGapsPage() {
               <span className="font-medium">Comment: </span>
               {row.classifier_gap_comment ?? <span className="text-zinc-400">(no comment)</span>}
             </p>
+            <UndoGapButton transactionId={row.id} />
           </div>
         ))}
         {rows.length === 0 && (
