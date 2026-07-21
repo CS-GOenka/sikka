@@ -30,6 +30,12 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   }
 
   const message = (body as { message?: unknown })?.message;
+  const rawPhoneReceivedAt = (body as { phoneReceivedAt?: unknown })?.phoneReceivedAt;
+  // No parsing/validation of the format yet - we don't know what shape the
+  // Shortcut actually sends. Just log and capture it as-is.
+  console.log("Raw phoneReceivedAt received:", rawPhoneReceivedAt);
+  const phoneReceivedAt = typeof rawPhoneReceivedAt === "string" ? rawPhoneReceivedAt : null;
+
   if (typeof message !== "string" || message.trim().length === 0) {
     return NextResponse.json({ status: "OK" });
   }
@@ -85,7 +91,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     try {
       const { data, error } = await supabase
         .from("raw_messages")
-        .insert({ message })
+        .insert({ message, phone_received_at: phoneReceivedAt })
         .select("id")
         .single();
 
