@@ -106,10 +106,22 @@ def is_sensitive(text):
     return any(p.search(text) for p in SENSITIVE_PATTERNS)
 
 
+APPLE_EPOCH = datetime(2001, 1, 1)
+
+
+def apple_ns_to_iso(apple_ns):
+    # chat.db's `date` column is nanoseconds since the Apple epoch
+    # (2001-01-01 UTC) on modern macOS. This is the actual time this Mac's
+    # Messages app received the SMS - a real, precise timestamp, unlike the
+    # Shortcut's own phoneReceivedAt (a human-readable string of uncertain
+    # format sent inconsistently).
+    seconds = apple_ns / 1_000_000_000
+    return (APPLE_EPOCH + timedelta(seconds=seconds)).isoformat() + "Z"
+
+
 def fetch_recent_icici_messages():
-    apple_epoch = datetime(2001, 1, 1)
     start_dt = datetime.utcnow() - timedelta(days=LOOKBACK_DAYS)
-    start_ns = int((start_dt - apple_epoch).total_seconds() * 1_000_000_000)
+    start_ns = int((start_dt - APPLE_EPOCH).total_seconds() * 1_000_000_000)
 
     uri = f"file:{DB_PATH}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
@@ -123,19 +135,19 @@ def fetch_recent_icici_messages():
     )
 
     messages = []
-    for text_col, attributed_body, _date in cur:
+    for text_col, attributed_body, msg_date in cur:
         full_text = get_message_text(text_col, attributed_body)
         if not full_text or TARGET not in full_text.lower():
             continue
         if is_sensitive(full_text):
             continue
-        messages.append(full_text)
+        messages.append((full_text, apple_ns_to_iso(msg_date)))
     conn.close()
     return messages
 
 
-def post_message(message):
-    body = json.dumps({"message": message}).encode()
+def post_message(message, phone_received_at):
+    body = json.dumps({"message": message, "phoneReceivedAt": phone_received_at}).encode()
     req = urllib.request.Request(
         INGEST_URL, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
@@ -155,8 +167,8 @@ def main():
 
     ok = 0
     failed = 0
-    for msg in messages:
-        status, body = post_message(msg)
+    for msg, phone_received_at in messages:
+        status, body = post_message(msg, phone_received_at)
         if status == 200:
             ok += 1
         else:
