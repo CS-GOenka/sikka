@@ -83,9 +83,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Recategorizing fully resolves the row - clears both reasons it could
+  // have been in the review queue (AI uncertainty and a manual star).
   const { error: updateError } = await supabase
     .from("transactions")
-    .update({ category_id: category.id, needs_category_review: false })
+    .update({ category_id: category.id, needs_category_review: false, starred: false })
     .eq("id", transactionId);
 
   if (updateError) {

@@ -49,7 +49,7 @@ function isValidDate(year: number, month: number, day: number): boolean {
   return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
 }
 
-function parseDate(s: string | null | undefined): string | null {
+export function parseDate(s: string | null | undefined): string | null {
   if (!s) return null;
   const m = /^(\d{1,2})[-/]([A-Za-z]{3})[-/]?(\d{2,4})/.exec(s.trim());
   if (!m) return null;

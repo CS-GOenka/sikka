@@ -3,6 +3,7 @@ import Link from "next/link";
 const LINKS = [
   { href: "/transactions", label: "Transactions" },
   { href: "/review", label: "Review" },
+  { href: "/classifier-gaps", label: "Classifier Gaps" },
   { href: "/settings", label: "Settings" },
 ];
 

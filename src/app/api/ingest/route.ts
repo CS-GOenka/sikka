@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { classify } from "@/lib/classify";
 import { categorizeTransaction } from "@/lib/categorize";
 import { tryResolveRefundReference } from "@/lib/refundResolution";
+import { tryResolveCcBillPayment } from "@/lib/ccBillPaymentResolution";
 import { startTiming } from "@/lib/timing";
 
 export const maxDuration = 60;
@@ -155,6 +156,26 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   if (transaction.type === "debit" || transaction.type === "credit") {
     after(async () => {
       try {
+        if (transaction.type === "debit") {
+          // Any debit not already tagged by the billdesk-payee rule might
+          // still be a credit card bill payment made via a different rail
+          // (ACH/UPI/NEFT) - a separate confirmation SMS can confirm that
+          // by amount+date. Confirmed matches are transfers, not real
+          // spend, so categorization is skipped for them entirely.
+          const ccOutcome = await tryResolveCcBillPayment({
+            id: transaction.id,
+            type: transaction.type,
+            payee: classified.payee,
+            amount: classified.amount,
+            transaction_date: classified.transactionDate,
+            account_type: classified.accountType,
+            card_or_account: classified.cardOrAccount,
+          });
+          if (ccOutcome.resolved) {
+            return;
+          }
+        }
+
         let payee = classified.payee;
         if (!payee) {
           // Payee-less refund/reversal messages (e.g. "...as reversal of

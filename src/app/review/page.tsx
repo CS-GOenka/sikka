@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
+import { ReportGapButton } from "@/components/ReportGapButton";
 import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,8 @@ type ReviewRow = {
   transaction_date: string | null;
   type: string;
   note: string | null;
+  needs_category_review: boolean;
+  starred: boolean;
   categories: { name: string } | null;
   raw_messages: { message: string } | null;
 };
@@ -31,9 +34,10 @@ async function renderReviewPage() {
     supabase
       .from("transactions")
       .select(
-        "id, payee, amount, currency, transaction_date, type, note, categories(name), raw_messages(message)"
+        "id, payee, amount, currency, transaction_date, type, note, needs_category_review, starred, categories(name), raw_messages(message)"
       )
-      .or("needs_category_review.eq.true,and(type.in.(debit,credit),category_id.is.null)")
+      .or("needs_category_review.eq.true,starred.eq.true")
+      .eq("classifier_gap_reported", false)
       .order("transaction_date", { ascending: false, nullsFirst: false })
       .returns<ReviewRow[]>(),
     getAssignableCategories(),
@@ -61,6 +65,18 @@ async function renderReviewPage() {
             className="flex flex-col gap-2 rounded border border-zinc-200 p-4 sm:flex-row sm:items-start sm:justify-between dark:border-zinc-800"
           >
             <div className="flex flex-col gap-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {row.needs_category_review && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                    AI uncertain
+                  </span>
+                )}
+                {row.starred && (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
+                    Flagged by you
+                  </span>
+                )}
+              </div>
               <span className="font-medium">{row.payee ?? "(no payee)"}</span>
               <span className="text-sm text-zinc-500">
                 {row.transaction_date ?? "—"} · {row.type} · {row.currency} {row.amount ?? "—"}
@@ -72,11 +88,14 @@ async function renderReviewPage() {
                 </p>
               )}
             </div>
-            <CategoryPicker
-              transactionId={row.id}
-              currentCategoryName={row.categories?.name ?? null}
-              categories={categories}
-            />
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              <CategoryPicker
+                transactionId={row.id}
+                currentCategoryName={row.categories?.name ?? null}
+                categories={categories}
+              />
+              <ReportGapButton transactionId={row.id} />
+            </div>
           </div>
         ))}
         {rows.length === 0 && (

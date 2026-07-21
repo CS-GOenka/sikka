@@ -2,6 +2,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
+import { StarToggle } from "@/components/StarToggle";
 import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +17,9 @@ type TransactionRow = {
   transaction_date: string | null;
   type: string;
   payment_method: string;
+  starred: boolean;
   categories: { name: string } | null;
-  raw_messages: { created_at: string } | null;
+  raw_messages: { created_at: string; phone_received_at: string | null } | null;
 };
 
 function formatAmount(amount: number | null, currency: string, type: string) {
@@ -26,16 +28,16 @@ function formatAmount(amount: number | null, currency: string, type: string) {
   return `${sign}${currency} ${amount.toLocaleString("en-IN")}`;
 }
 
-// transaction_date is date-only (no time component - confirmed against the
-// live schema) and the SMS text itself never carries a time for standard
-// transactions, so the closest real timestamp we have is when the message
-// was received server-side. That's still not the same as the transaction
-// moment (especially for anything caught by the 15-minute reconciliation
-// safety net rather than the instant Shortcut path), so this is labeled
-// "Received" rather than implying transaction-time precision.
-function formatReceived(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-IN", {
+// Neither source here is the exact transaction moment: transaction_date is
+// date-only and the SMS text carries no time for standard transactions, and
+// phone_received_at (when the phone-side Shortcut reports it) hasn't been
+// parsed/validated yet - it's a raw, unvalidated string from the phone, shown
+// verbatim. Falls back to the server's own receipt timestamp otherwise.
+// Labeled "Received" either way, deliberately not "Transaction time".
+function formatReceived(phoneReceivedAt: string | null, serverCreatedAt: string | null) {
+  if (phoneReceivedAt) return phoneReceivedAt;
+  if (!serverCreatedAt) return "—";
+  return new Date(serverCreatedAt).toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
     day: "2-digit",
     month: "short",
@@ -69,7 +71,7 @@ async function renderTransactionsPage(
     supabase
       .from("transactions")
       .select(
-        "id, payee, amount, currency, transaction_date, type, payment_method, categories(name), raw_messages(created_at)",
+        "id, payee, amount, currency, transaction_date, type, payment_method, starred, categories(name), raw_messages(created_at, phone_received_at)",
         { count: "exact" }
       )
       .neq("type", "ignored")
@@ -102,8 +104,11 @@ async function renderTransactionsPage(
         <table className="min-w-full text-sm">
           <thead className="bg-zinc-50 text-left dark:bg-zinc-900">
             <tr>
-              <th className="px-3 py-2 font-medium">Date</th>
-              <th className="px-3 py-2 font-medium" title="When the message was received, not necessarily the exact transaction moment">
+              <th className="px-3 py-2 font-medium"></th>
+              <th
+                className="px-3 py-2 font-medium"
+                title="When the message was received, not necessarily the exact transaction moment"
+              >
                 Received
               </th>
               <th className="px-3 py-2 font-medium">Payee</th>
@@ -116,11 +121,11 @@ async function renderTransactionsPage(
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                <td className="whitespace-nowrap px-3 py-2 text-zinc-500">
-                  {row.transaction_date ?? "—"}
+                <td className="px-3 py-2">
+                  <StarToggle transactionId={row.id} starred={row.starred} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-zinc-500">
-                  {formatReceived(row.raw_messages?.created_at ?? null)}
+                  {formatReceived(row.raw_messages?.phone_received_at ?? null, row.raw_messages?.created_at ?? null)}
                 </td>
                 <td className="px-3 py-2">{row.payee ?? "—"}</td>
                 <td
@@ -156,7 +161,8 @@ async function renderTransactionsPage(
         </table>
       </div>
       <p className="text-xs text-zinc-400">
-        &ldquo;Received&rdquo; is when the message reached the server, not necessarily the exact transaction time.
+        &ldquo;Received&rdquo; is when the message reached the phone or server, not necessarily the exact
+        transaction time.
       </p>
 
       <div className="flex items-center justify-between text-sm">
