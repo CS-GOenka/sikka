@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
 import { StarToggle } from "@/components/StarToggle";
+import { formatReceived } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
@@ -26,24 +27,6 @@ function formatAmount(amount: number | null, currency: string, type: string) {
   if (amount === null) return "—";
   const sign = type === "debit" ? "-" : type === "credit" ? "+" : "";
   return `${sign}${currency} ${amount.toLocaleString("en-IN")}`;
-}
-
-// Neither source here is the exact transaction moment: transaction_date is
-// date-only and the SMS text carries no time for standard transactions, and
-// phone_received_at (when the phone-side Shortcut reports it) hasn't been
-// parsed/validated yet - it's a raw, unvalidated string from the phone, shown
-// verbatim. Falls back to the server's own receipt timestamp otherwise.
-// Labeled "Received" either way, deliberately not "Transaction time".
-function formatReceived(phoneReceivedAt: string | null, serverCreatedAt: string | null) {
-  if (phoneReceivedAt) return phoneReceivedAt;
-  if (!serverCreatedAt) return "—";
-  return new Date(serverCreatedAt).toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 export default async function TransactionsPage({
@@ -72,7 +55,10 @@ async function renderTransactionsPage(
       .from("transactions")
       .select(
         "id, payee, amount, currency, transaction_date, type, payment_method, starred, categories(name), raw_messages(created_at, phone_received_at)",
-        { count: "exact" }
+        // "estimated" trades exact precision for speed that doesn't degrade
+        // as the table grows - uses Postgres's own table statistics instead
+        // of a real COUNT(*) scan. Fine for a "N total" label.
+        { count: "estimated" }
       )
       .neq("type", "ignored")
       .order("transaction_date", { ascending: false, nullsFirst: false })

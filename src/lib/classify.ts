@@ -192,8 +192,12 @@ export function classify(text: string | null | undefined): ClassifyResult {
   }
 
   // ================= 3. NEFT / RTGS / ACH credit into own account =================
+  // Name segment after the second hyphen is optional - some real NEFT
+  // references end "NEFT-REF-." with nothing between the trailing hyphen
+  // and the period (e.g. "Info NEFT-HDFCN52025011007835680-."), not every
+  // reference includes a separately-appended sender name.
   m = new RegExp(
-    String.raw`ICICI Bank Account\s*${ACCT_RE}\s+credited:\s?${AMOUNT_RE}\s+on\s+${DATE_RE}\.\s*Info\s*NEFT-(\S+?)-(.+?)\.\s*Available Balance`,
+    String.raw`ICICI Bank Account\s*${ACCT_RE}\s+credited:\s?${AMOUNT_RE}\s+on\s+${DATE_RE}\.\s*Info\s*NEFT-(\S+?)-(.*?)\.\s*Available Balance`,
     "i"
   ).exec(t);
   if (m) {
@@ -201,13 +205,13 @@ export function classify(text: string | null | undefined): ClassifyResult {
     return result({
       type: "credit", paymentMethod: "neft", status: "success",
       accountType: "savings", cardOrAccount: m[1],
-      payee: cleanPayee(rawPayee), note: rawPayee,
+      payee: rawPayee ? cleanPayee(rawPayee) : null, note: rawPayee || null,
       amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
       transactionDate: parseDate(m[3]),
     });
   }
   m = new RegExp(
-    String.raw`ICICI Bank Account\s*${ACCT_RE}\s+has been credited with\s+${AMOUNT_RE}\s+on\s+${DATE_RE}\.\s*Info:\s*NEFT-(\S+?)-(.+?)\.\s*The Available Balance`,
+    String.raw`ICICI Bank Account\s*${ACCT_RE}\s+has been credited with\s+${AMOUNT_RE}\s+on\s+${DATE_RE}\.\s*Info:\s*NEFT-(\S+?)-(.*?)\.\s*The Available Balance`,
     "i"
   ).exec(t);
   if (m) {
@@ -215,7 +219,7 @@ export function classify(text: string | null | undefined): ClassifyResult {
     return result({
       type: "credit", paymentMethod: "neft", status: "success",
       accountType: "savings", cardOrAccount: m[1],
-      payee: cleanPayee(rawPayee), note: rawPayee,
+      payee: rawPayee ? cleanPayee(rawPayee) : null, note: rawPayee || null,
       amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
       transactionDate: parseDate(m[3]),
     });
@@ -461,6 +465,58 @@ export function classify(text: string | null | undefined): ClassifyResult {
       transactionDate: parseDate(m[3]),
     });
   }
+  // 14b. NFS*CASH WDL* - ATM cash withdrawal via the National Financial
+  // Switch, not a "merchant" to parse a name out of. Checked before the
+  // generic CODE*NAME variants below since it'd otherwise also match those
+  // (same message shape), just with a less clean parsed payee.
+  if (low.includes("nfs*cash wdl")) {
+    m = new RegExp(
+      String.raw`ICICI Bank Acc\.?\s*${ACCT_RE}\s+debited\s+${AMOUNT_RE}\s+on\s+${DATE_RE}`,
+      "i"
+    ).exec(t);
+    if (m) {
+      return result({
+        type: "debit", paymentMethod: "card", status: "success",
+        accountType: "savings", cardOrAccount: m[1],
+        payee: "Cash Withdrawal", note: "NFS*CASH WDL*",
+        amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
+        transactionDate: parseDate(m[3]),
+      });
+    }
+  }
+  // 14c. "Acc is debited with/debited Rs X on DATE CODE*NAME . Available/Avb/Avl bal"
+  // (no period right after the date, unlike the variant above; recurring
+  // UPI-mandate-style charges like "VIN*CLAUDE AI" or "VSI*GMATCLUB").
+  m = new RegExp(
+    String.raw`ICICI Bank Acc\.?\s*${ACCT_RE}\s+(?:is\s+)?debited(?:\s+with)?\s+${AMOUNT_RE}\s+on\s+${DATE_RE}\s+(.+?)\s*\.\s*(?:Available bal|Avb Bal|Avl Bal)`,
+    "i"
+  ).exec(t);
+  if (m) {
+    const [payee, note] = parseCodeName(m[4]);
+    return result({
+      type: "debit", paymentMethod: "ach", status: "success",
+      accountType: "savings", cardOrAccount: m[1],
+      payee, note,
+      amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
+      transactionDate: parseDate(m[3]),
+    });
+  }
+  // 14d. Same shape, amount-first word order: "Rs X debited from ICICI Bank
+  // Acc XX036 on DATE CODE*NAME. Bal Rs Y".
+  m = new RegExp(
+    String.raw`${AMOUNT_RE}\s+debited from ICICI Bank Acc\.?\s*${ACCT_RE}\s+on\s+${DATE_RE}\s+(.+?)\s*\.\s*(?:Bal|Avb Bal|Avl Bal)`,
+    "i"
+  ).exec(t);
+  if (m) {
+    const [payee, note] = parseCodeName(m[4]);
+    return result({
+      type: "debit", paymentMethod: "ach", status: "success",
+      accountType: "savings", cardOrAccount: m[2],
+      payee, note,
+      amount: parseAmount(m[1]), currency: detectCurrency(t, m.index + m[0].indexOf(m[1])),
+      transactionDate: parseDate(m[3]),
+    });
+  }
 
   // ================= 15. Standing Instruction family (Credit Card SIs) =================
   if (low.includes("standing instruction")) {
@@ -515,13 +571,16 @@ export function classify(text: string | null | undefined): ClassifyResult {
       });
     }
 
-    if (/^we have activated standing instruction/i.test(low)) {
+    // Not anchored to the start of the message - real messages are
+    // prefixed with "Dear Customer, " (and use "Instructions", plural).
+    if (/we have activated standing instructions?/i.test(low)) {
       const mPayee = /Merchant:\s*(.+?),/i.exec(t);
       const rawPayee = mPayee ? mPayee[1].trim() : null;
       const mAmt = new RegExp(AMOUNT_RE, "i").exec(t);
       return result({
         type: "ignored", paymentMethod: "mandate", status: "success",
-        accountType: "credit_card", cardOrAccount: card,
+        accountType: low.includes("debit card") ? "savings" : "credit_card",
+        cardOrAccount: card,
         payee: cleanPayee(rawPayee), note: rawPayee,
         amount: mAmt ? parseAmount(mAmt[1]) : null,
         currency: mAmt ? detectCurrency(t, mAmt.index + mAmt[0].indexOf(mAmt[1])) : "INR",
@@ -549,7 +608,7 @@ export function classify(text: string | null | undefined): ClassifyResult {
 
   // ================= 16. Declined transactions -> debit/failed =================
   m = new RegExp(
-    String.raw`(?:Your\s+)?[Tt]ransaction of\s+${AMOUNT_RE}(?:\s+at\s+(.+?))?\s+on ICICI Bank Credit Card\s*${ACCT_RE}\s+(?:is|was)\s+declined`,
+    String.raw`(?:Your\s+)?[Tt]ransaction of\s+${AMOUNT_RE}(?:\s+at\s+(.+?))?\s+on ICICI Bank Credit Card\s*${ACCT_RE}\s+(?:is|was)\s+(?:declined|withheld for security reasons)`,
     "i"
   ).exec(t);
   if (m) {
@@ -595,6 +654,36 @@ export function classify(text: string | null | undefined): ClassifyResult {
       payee: cleanPayee(m[1].trim()), note: m[1].trim(),
       amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
       transactionDate: parseDate(m[4]),
+    });
+  }
+
+  // ================= 19b. Card-side transaction reversal ("...has been reversed") =================
+  m = new RegExp(
+    String.raw`transaction of\s+${AMOUNT_RE}\s+on ICICI Bank Credit Card\s*${ACCT_RE}\s+at\s+(.+?)\s+dated\s+${DATE_RE}.*?has been reversed`,
+    "i"
+  ).exec(t);
+  if (m) {
+    return result({
+      type: "credit", paymentMethod: "card", status: "success",
+      accountType: "credit_card", cardOrAccount: m[2],
+      payee: cleanPayee(m[3].trim()), note: m[3].trim(),
+      amount: parseAmount(m[1]), currency: detectCurrency(t, m.index + m[0].indexOf(m[1])),
+      transactionDate: parseDate(m[4]),
+    });
+  }
+
+  // ================= 19c. Mutual fund redemption payout credited via NEFT =================
+  m = new RegExp(
+    String.raw`Redemption payout of Rs\.?([\d,]+\.?\d*)\s+for trade date\s+\d{1,2}\/\d{1,2}\/\d{4}\s+under\s+Folio-\S+\s+in\s+(.+?)\s+is initiated through NEFT.*?on\s+(\d{1,2}\/\d{1,2}\/\d{4})`,
+    "i"
+  ).exec(t);
+  if (m) {
+    return result({
+      type: "credit", paymentMethod: "neft", status: "success",
+      accountType: "savings", isTransfer: false,
+      payee: cleanPayee(m[2].trim()), note: m[2].trim(),
+      amount: parseAmount(m[1]), currency: "INR",
+      transactionDate: parseDateSlash(m[3]),
     });
   }
 
@@ -644,10 +733,34 @@ export function classify(text: string | null | undefined): ClassifyResult {
   if (low.includes("minimum amount due calculation")) {
     return result({ type: "ignored", paymentMethod: "card" });
   }
+  // Several other "total due / min due by DATE" wordings exist:
+  // "Total Due INR X & Min Due INR Y to be paid by...", "Kindly pay total
+  // due of Rs X or Min Due Rs Y by...", "Pay Total Due of Rs X or Minimum
+  // Due Rs Y by... for ICICI Bank Credit Card...".
+  if (
+    low.includes("total due") &&
+    (low.includes("min due") || low.includes("minimum due")) &&
+    low.includes("credit card")
+  ) {
+    return result({ type: "ignored", paymentMethod: "card" });
+  }
 
   // ================= 24. Fraud-check / unable to confirm -> ignored =================
-  if (low.includes("unable to confirm")) {
+  if (low.includes("unable to confirm") || (low.includes("unable to reach you") && low.includes("confirm"))) {
     return result({ type: "ignored", paymentMethod: "unknown" });
+  }
+
+  // ================= 24b. UPI Autopay mandate lifecycle notices -> ignored =================
+  // Different terminology family than "Standing Instruction" - mandate
+  // creation/approval/hold notices, not the actual charge itself.
+  if (low.includes("mandate") && low.includes("raised by") && low.includes("for your approval")) {
+    return result({ type: "ignored", paymentMethod: "mandate" });
+  }
+  if (low.includes("you have approved the mandate")) {
+    return result({ type: "ignored", paymentMethod: "mandate" });
+  }
+  if (low.includes("account has been blocked") && low.includes("mandate")) {
+    return result({ type: "ignored", paymentMethod: "mandate" });
   }
 
   // ================= 25. iMobile / security / account-settings notices -> ignored =================
@@ -665,11 +778,21 @@ export function classify(text: string | null | undefined): ClassifyResult {
     "icici bank imobile has been reactivated",
     "access to imobile, fund transfer blocked",
     "revised dynamic currency conversion fee",
+    "the credit limit for your icici bank credit card",
+    "we have changed the spend limit",
+    "relationship manager",
+    "important update regarding",
+    "esign document has been successfully signed",
+    "we have registered your request for debit card",
+    "dispatched: card-", "out for delivery: card-", "delivered: card-",
+    "thank you for banking with icici bank",
+    "we have activated your auto debit facility request",
   ];
   if (INFO_MARKERS.some((marker) => low.includes(marker))) {
     return result({ type: "ignored", paymentMethod: "unknown" });
   }
-  if (/^payee\s+\S+\s+added/i.test(low) || low.includes("have passed since adding")) {
+  // Payee name can be more than one word ("Payee Goa Villa added.").
+  if (/^payee\s+.+?\s+added/i.test(low) || low.includes("have passed since adding")) {
     return result({ type: "ignored", paymentMethod: "unknown" });
   }
 
@@ -682,6 +805,8 @@ export function classify(text: string | null | undefined): ClassifyResult {
     "credit limit increase on your icici bank credit card",
     "convert your icici bank credit card transactions into emis",
     "in 30 sec",
+    "icici bank paylater", "duty-free shopping", "festival of electronics",
+    "times group patron",
   ];
   if (PROMO_MARKERS.some((marker) => low.includes(marker))) {
     return result({ type: "ignored", paymentMethod: "unknown" });

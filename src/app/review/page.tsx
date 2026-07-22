@@ -3,6 +3,7 @@ import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
 import { ReportGapButton } from "@/components/ReportGapButton";
 import { StarToggle } from "@/components/StarToggle";
+import { formatReceived } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ type ReviewRow = {
   needs_category_review: boolean;
   starred: boolean;
   categories: { name: string } | null;
-  raw_messages: { message: string } | null;
+  raw_messages: { message: string; created_at: string; phone_received_at: string | null } | null;
 };
 
 export default async function ReviewPage() {
@@ -35,7 +36,7 @@ async function renderReviewPage() {
     supabase
       .from("transactions")
       .select(
-        "id, payee, amount, currency, transaction_date, type, note, needs_category_review, starred, categories(name), raw_messages(message)"
+        "id, payee, amount, currency, transaction_date, type, note, needs_category_review, starred, categories(name), raw_messages(message, created_at, phone_received_at)"
       )
       .or("needs_category_review.eq.true,starred.eq.true")
       .eq("classifier_gap_reported", false)
@@ -79,7 +80,12 @@ async function renderReviewPage() {
                   </span>
                 )}
               </div>
-              <span className="font-medium">{row.payee ?? "(no payee)"}</span>
+              <span className="font-medium">
+                {row.payee ?? "(no payee)"}
+                <span className="ml-2 font-normal text-zinc-400" title="When the message was received, not necessarily the exact transaction moment">
+                  Received {formatReceived(row.raw_messages?.phone_received_at ?? null, row.raw_messages?.created_at ?? null)}
+                </span>
+              </span>
               <span className="text-sm text-zinc-500">
                 {row.transaction_date ?? "—"} · {row.type} · {row.currency} {row.amount ?? "—"}
               </span>

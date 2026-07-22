@@ -128,13 +128,20 @@ export async function categorizeTransaction(row: {
   // else: no payee and no hardcoded rule matched - leave needs_category_review=true,
   // category_id=null rather than guessing.
 
-  const { error: updateError } = await supabase
-    .from("transactions")
-    .update({ category_id: categoryId, needs_category_review: needsReview })
-    .eq("id", row.id);
+  // One retry on the final write: under high request volume (e.g. a bulk
+  // load) this update has been observed to fail transiently, which used to
+  // leave the row silently stuck at its insert-time defaults - uncategorized
+  // and, worse, invisible in /review. needs_category_review now also
+  // defaults to true at the DB level as a second layer of defense, but a
+  // retry means most transient failures never need that fallback at all.
+  let updateError = (await supabase.from("transactions").update({ category_id: categoryId, needs_category_review: needsReview }).eq("id", row.id)).error;
+  if (updateError) {
+    console.error(`Failed to save category for transaction ${row.id}, retrying once:`, updateError);
+    updateError = (await supabase.from("transactions").update({ category_id: categoryId, needs_category_review: needsReview }).eq("id", row.id)).error;
+  }
 
   if (updateError) {
-    console.error(`Failed to save category for transaction ${row.id}:`, updateError);
+    console.error(`Failed to save category for transaction ${row.id} after retry:`, updateError);
     return { id: row.id, payee, categoryId: null, needsReview: true, source, error: updateError.message };
   }
 
