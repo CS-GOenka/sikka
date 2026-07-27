@@ -20,7 +20,16 @@ export function isInvestmentTransaction(row: {
   return false;
 }
 
-export type CategorizeSource = "hardcoded" | "cache" | "llm" | "llm_uncertain" | "no_payee";
+// Own-name transfers between the account holder's own accounts - never
+// real spend, regardless of category.
+const SELF_TRANSFER_NAMES = ["saurabh goenka"];
+
+export function isSelfTransfer(payee: string | null): boolean {
+  if (!payee) return false;
+  return SELF_TRANSFER_NAMES.includes(payee.trim().toLowerCase());
+}
+
+export type CategorizeSource = "hardcoded" | "cache" | "llm" | "llm_uncertain" | "llm_p2p_unconfirmed" | "no_payee";
 
 export interface CategorizeOutcome {
   id: number;
@@ -47,6 +56,27 @@ async function getInvestmentsCategoryId(): Promise<number> {
   return data.id;
 }
 
+let personToPersonCategoryIdsCache: Set<number> | null = null;
+
+// Person-to-Person and all of its children (e.g. "Friends and Family") -
+// the category an LLM guess defaults to most often without real evidence,
+// per the merchant_categories cache audit.
+async function getPersonToPersonCategoryIds(): Promise<Set<number>> {
+  if (personToPersonCategoryIdsCache !== null) return personToPersonCategoryIdsCache;
+  const { data: parent, error: parentError } = await supabase
+    .from("categories")
+    .select("id")
+    .eq("name", "Person-to-Person")
+    .single();
+  if (parentError || !parent) {
+    throw new Error("Person-to-Person category not found in categories table");
+  }
+  const { data: children } = await supabase.from("categories").select("id").eq("parent_id", parent.id);
+  const ids = new Set<number>([parent.id, ...(children ?? []).map((c) => c.id)]);
+  personToPersonCategoryIdsCache = ids;
+  return ids;
+}
+
 // Categorizes a single transaction: hardcoded investment rules first (no
 // Gemma call), then the merchant_categories cache, then Gemma as a last
 // resort - caching any newly-derived category for future lookups. Always
@@ -63,6 +93,18 @@ export async function categorizeTransaction(row: {
   let needsReview = true;
   let source: CategorizeSource = "no_payee";
   let errorMsg: string | undefined;
+
+  if (isSelfTransfer(payee)) {
+    const { error: updateError } = await supabase
+      .from("transactions")
+      .update({ category_id: null, needs_category_review: false, is_transfer: true })
+      .eq("id", row.id);
+    if (updateError) {
+      console.error(`Failed to mark self-transfer for transaction ${row.id}:`, updateError);
+      return { id: row.id, payee, categoryId: null, needsReview: true, source: "hardcoded", error: updateError.message };
+    }
+    return { id: row.id, payee, categoryId: null, needsReview: false, source: "hardcoded" };
+  }
 
   if (isInvestmentTransaction(row)) {
     categoryId = await getInvestmentsCategoryId();
@@ -99,23 +141,37 @@ export async function categorizeTransaction(row: {
     } else {
       try {
         const match = await categorizeMerchant(payee);
-        categoryId = match ? match.id : null;
-        needsReview = match === null;
-        source = match === null ? "llm_uncertain" : "llm";
 
-        if (match !== null) {
-          const confidenceSource = row.payment_method === "mandate" ? "mandate" : "llm";
-          const { error: upsertError } = await supabase.from("merchant_categories").upsert(
-            {
-              payee,
-              category_id: match.id,
-              confidence_source: confidenceSource,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "payee" }
-          );
-          if (upsertError) {
-            console.error(`Failed to cache category for payee "${payee}":`, upsertError);
+        if (match !== null && (await getPersonToPersonCategoryIds()).has(match.id)) {
+          // Person-to-Person is where a truncated or ambiguous business
+          // name most often gets defaulted to without real evidence (per
+          // the merchant_categories cache audit). Assign it as a tentative
+          // answer so the transaction isn't left blank, but never cache
+          // it - surfaces once in /review for a one-time human decision.
+          // Once manually confirmed there, normal caching takes over and
+          // this exact payee is never asked about again.
+          categoryId = match.id;
+          needsReview = true;
+          source = "llm_p2p_unconfirmed";
+        } else {
+          categoryId = match ? match.id : null;
+          needsReview = match === null;
+          source = match === null ? "llm_uncertain" : "llm";
+
+          if (match !== null) {
+            const confidenceSource = row.payment_method === "mandate" ? "mandate" : "llm";
+            const { error: upsertError } = await supabase.from("merchant_categories").upsert(
+              {
+                payee,
+                category_id: match.id,
+                confidence_source: confidenceSource,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "payee" }
+            );
+            if (upsertError) {
+              console.error(`Failed to cache category for payee "${payee}":`, upsertError);
+            }
           }
         }
       } catch (err) {

@@ -157,11 +157,23 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     after(async () => {
       try {
         if (transaction.type === "debit") {
-          // Any debit not already tagged by the billdesk-payee rule might
-          // still be a credit card bill payment made via a different rail
-          // (ACH/UPI/NEFT) - a separate confirmation SMS can confirm that
-          // by amount+date. Confirmed matches are transfers, not real
-          // spend, so categorization is skipped for them entirely.
+          // Already tagged as a bill payment at classify time (BillDesk,
+          // CRED) - skip categorization outright. Previously this fell
+          // through to categorizeTransaction() anyway (tryResolveCcBillPayment
+          // correctly declines to re-touch it, but declining isn't the same
+          // as skipping), which really did assign real spend categories to
+          // transfer transactions in production - caught via a merchant_categories
+          // entry for "Credit Card Bill Payment" itself and at least one
+          // affected transaction.
+          if (classified.payee === "Credit Card Bill Payment") {
+            return;
+          }
+
+          // Any other debit not already tagged might still be a credit card
+          // bill payment made via a different rail (ACH/UPI/NEFT) - a
+          // separate confirmation SMS can confirm that by amount+date.
+          // Confirmed matches are transfers, not real spend, so
+          // categorization is skipped for them entirely.
           const ccOutcome = await tryResolveCcBillPayment({
             id: transaction.id,
             type: transaction.type,

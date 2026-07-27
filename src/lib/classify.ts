@@ -157,7 +157,14 @@ export function classify(text: string | null | undefined): ClassifyResult {
     const amount = parseAmount(m[2]);
     const currency = detectCurrency(t, m.index + m[0].indexOf(m[2]));
     const date_ = parseDate(m[3]);
-    if (/billdesk/i.test(rawPayee)) {
+    // CRED (and BillDesk) are third-party bill-payment apps: money moves
+    // from this account to them, and they settle the actual card bill
+    // internally. ICICI never sends a "payment received on your credit
+    // card" confirmation for that internal step, so the separate
+    // amount+date confirmation matcher structurally cannot catch these -
+    // there is nothing to match against. Detected by payee name instead,
+    // same as BillDesk.
+    if (/billdesk/i.test(rawPayee) || /^cred(\s+club)?$/i.test(rawPayee.trim())) {
       return result({
         type: "debit", paymentMethod: "upi", status: "success",
         accountType: "savings", isTransfer: true, cardOrAccount: acct,

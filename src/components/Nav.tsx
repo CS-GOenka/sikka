@@ -4,6 +4,7 @@ const LINKS = [
   { href: "/transactions", label: "Transactions" },
   { href: "/review", label: "Review" },
   { href: "/classifier-gaps", label: "Classifier Gaps" },
+  { href: "/cleanup", label: "Cleanup" },
   { href: "/settings", label: "Settings" },
 ];
 
