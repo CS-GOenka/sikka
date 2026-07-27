@@ -166,6 +166,18 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
           // entry for "Credit Card Bill Payment" itself and at least one
           // affected transaction.
           if (classified.payee === "Credit Card Bill Payment") {
+            // needs_category_review defaults to true at the DB level (a
+            // fail-safe for categorization failures) and nothing else
+            // clears it on this skip-categorization path, so it has to be
+            // set explicitly here - otherwise a fully-resolved transfer
+            // would incorrectly sit in the review queue forever.
+            const { error: resolvedError } = await supabase
+              .from("transactions")
+              .update({ needs_category_review: false })
+              .eq("id", transaction.id);
+            if (resolvedError) {
+              console.error(`Failed to clear needs_category_review for bill payment ${transaction.id}:`, resolvedError);
+            }
             return;
           }
 
