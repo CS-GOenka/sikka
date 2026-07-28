@@ -5,7 +5,8 @@ import { NotificationsSetup } from "@/components/NotificationsSetup";
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const { data, error } = await supabase.from("settings").select("daily_budget").eq("id", 1).maybeSingle();
+  // select * so a missing day_reset_hour column (pre-migration) doesn't error.
+  const { data, error } = await supabase.from("settings").select("*").eq("id", 1).maybeSingle();
 
   if (error) {
     return (
@@ -16,10 +17,15 @@ export default async function SettingsPage() {
     );
   }
 
+  const row = data as { daily_budget?: number | null; day_reset_hour?: number | null } | null;
+
   return (
     <main className="flex flex-col gap-4 p-6">
       <h1 className="text-xl font-semibold">Settings</h1>
-      <SettingsForm initialDailyBudget={data?.daily_budget ?? null} />
+      <SettingsForm
+        initialDailyBudget={row?.daily_budget ?? null}
+        initialDayResetHour={row?.day_reset_hour ?? 3}
+      />
       <NotificationsSetup />
     </main>
   );

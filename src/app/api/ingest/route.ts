@@ -5,6 +5,7 @@ import { classify } from "@/lib/classify";
 import { categorizeTransaction } from "@/lib/categorize";
 import { tryResolveRefundReference } from "@/lib/refundResolution";
 import { tryResolveCcBillPayment } from "@/lib/ccBillPaymentResolution";
+import { notifyBudgetForSpend } from "@/lib/budget";
 import { startTiming } from "@/lib/timing";
 
 export const maxDuration = 60;
@@ -245,6 +246,15 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
           payment_method: classified.paymentMethod,
           note: classified.note,
         });
+
+        // Now that the transaction is fully classified and categorized, fire a
+        // daily-budget notification if (and only if) it's a qualifying spend.
+        // notifyBudgetForSpend re-reads the final state and no-ops for
+        // transfers/credits/investments/failed/non-INR. Only debits can
+        // qualify, so credits skip it outright.
+        if (transaction.type === "debit") {
+          await notifyBudgetForSpend(transaction.id);
+        }
       } catch (err) {
         console.error(`Background categorization failed for transaction ${transaction.id}:`, err);
       }
