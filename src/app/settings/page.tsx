@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { SettingsForm } from "@/components/SettingsForm";
+import { NotificationsSetup } from "@/components/NotificationsSetup";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function SettingsPage() {
     <main className="flex flex-col gap-4 p-6">
       <h1 className="text-xl font-semibold">Settings</h1>
       <SettingsForm initialDailyBudget={data?.daily_budget ?? null} />
+      <NotificationsSetup />
     </main>
   );
 }
