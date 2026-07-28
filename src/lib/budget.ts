@@ -67,18 +67,22 @@ function countsAsSpend(row: { category_id: number | null; categories: { counts_a
 
 // Sum of qualifying spend within the given window. Qualifying = a successful,
 // non-transfer INR debit whose category counts as spend (or which has no
-// category yet). Uses transactions.created_at for the window since it's always
-// present and directly filterable; for a live alert that's ~ the spend moment.
+// category yet). The day boundary is anchored on raw_messages.phone_received_at
+// (when the SMS was actually received on the phone ~ when the spend happened),
+// normalized to canonical UTC ISO-8601 at ingest so it sorts/compares as text.
+// created_at is deliberately NOT used - it reflects when a row was inserted,
+// which is wrong for backfilled/reconciled data. The !inner join makes the
+// phone_received_at range filter restrict the transactions, not just the embed.
 export async function computeTodaySpend(window: { startISO: string; endISO: string }): Promise<number> {
   const { data, error } = await supabase
     .from("transactions")
-    .select("amount, category_id, categories(counts_as_spend)")
+    .select("amount, category_id, categories(counts_as_spend), raw_messages!inner(phone_received_at)")
     .eq("type", "debit")
     .eq("status", "success")
     .eq("is_transfer", false)
     .eq("currency", "INR")
-    .gte("created_at", window.startISO)
-    .lt("created_at", window.endISO)
+    .gte("raw_messages.phone_received_at", window.startISO)
+    .lt("raw_messages.phone_received_at", window.endISO)
     .returns<QualifyingRow[]>();
   if (error) {
     throw new Error(`Failed to compute today's spend: ${error.message}`);
@@ -102,6 +106,7 @@ interface NotifyRow {
   currency: string;
   category_id: number | null;
   categories: { name: string; counts_as_spend: boolean } | null;
+  raw_messages: { phone_received_at: string | null } | null;
 }
 
 // Called from the ingest after() step once a transaction has been fully
@@ -114,7 +119,9 @@ export async function notifyBudgetForSpend(transactionId: number, nowMs: number 
   try {
     const { data: txn, error } = await supabase
       .from("transactions")
-      .select("amount, type, status, is_transfer, currency, category_id, categories(name, counts_as_spend)")
+      .select(
+        "amount, type, status, is_transfer, currency, category_id, categories(name, counts_as_spend), raw_messages(phone_received_at)"
+      )
       .eq("id", transactionId)
       .single<NotifyRow>();
     if (error || !txn) {
@@ -133,6 +140,16 @@ export async function notifyBudgetForSpend(transactionId: number, nowMs: number 
 
     const { dailyBudget, dayResetHour } = await getBudgetSettings();
     const window = budgetDayWindowUtc(dayResetHour, nowMs);
+
+    // Only alert for a spend that belongs to the *current* budget day, keyed on
+    // when the SMS was received on the phone. A backfilled/reconciled old debit
+    // whose phone_received_at falls outside the current window shouldn't fire a
+    // "remaining today" alert - and it's excluded from today's total anyway.
+    const ph = txn.raw_messages?.phone_received_at;
+    if (!ph) return; // no reliable receipt time - can't place it in a budget day
+    const phMs = Date.parse(ph);
+    if (Number.isNaN(phMs) || phMs < Date.parse(window.startISO) || phMs >= Date.parse(window.endISO)) return;
+
     const todayTotal = await computeTodaySpend(window);
 
     const amount = txn.amount as number;

@@ -6,6 +6,7 @@ import { categorizeTransaction } from "@/lib/categorize";
 import { tryResolveRefundReference } from "@/lib/refundResolution";
 import { tryResolveCcBillPayment } from "@/lib/ccBillPaymentResolution";
 import { notifyBudgetForSpend } from "@/lib/budget";
+import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { startTiming } from "@/lib/timing";
 
 export const maxDuration = 60;
@@ -33,10 +34,15 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
 
   const message = (body as { message?: unknown })?.message;
   const rawPhoneReceivedAt = (body as { phoneReceivedAt?: unknown })?.phoneReceivedAt;
-  // No parsing/validation of the format yet - we don't know what shape the
-  // Shortcut actually sends. Just log and capture it as-is.
-  console.log("Raw phoneReceivedAt received:", rawPhoneReceivedAt);
-  const phoneReceivedAt = typeof rawPhoneReceivedAt === "string" ? rawPhoneReceivedAt : null;
+  // Two senders use two shapes: the reconcile script sends UTC ISO-8601, the
+  // iOS Shortcut sends an IST human string ("26 Jul 2026 at 12:37 AM").
+  // Normalize both to one canonical UTC ISO-8601 string so phone_received_at
+  // is consistently comparable - it's the anchor for the daily-budget day
+  // boundary (created_at is unreliable for backfilled rows).
+  const phoneReceivedAt = normalizePhoneReceivedAt(rawPhoneReceivedAt);
+  if (rawPhoneReceivedAt != null && phoneReceivedAt === null) {
+    console.warn("Unrecognized phoneReceivedAt format, storing null:", rawPhoneReceivedAt);
+  }
 
   if (typeof message !== "string" || message.trim().length === 0) {
     return NextResponse.json({ status: "OK" });
