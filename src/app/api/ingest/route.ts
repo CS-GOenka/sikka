@@ -123,6 +123,20 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // every message that reaches here is classified automatically, with no
   // manual trigger required.
   const classified = classify(message);
+
+  // Sanity guard: a parsed amount this large is far beyond any plausible
+  // personal transaction (the largest real one on record is ~₹2 lakh) and
+  // almost always signals a malformed or synthetic message - e.g. the
+  // fabricated CRED test messages whose "amount" was the tail of the UPI
+  // reference number. The parser itself is correct (the value really is in
+  // the text), so this doesn't touch parsing; it just refuses to let such a
+  // row flow through as a silently-resolved transaction. Instead it's left
+  // with needs_category_review=true (the insert-time default) and skips
+  // auto-categorization/bill-payment resolution below, so it surfaces in
+  // /review for a human instead of quietly polluting spend/transfer totals.
+  const AMOUNT_SANITY_CAP = 10_000_000; // ₹1 crore
+  const suspiciousAmount = classified.amount !== null && classified.amount > AMOUNT_SANITY_CAP;
+
   const { data: transaction, error: txnError } = await supabase
     .from("transactions")
     .insert({
@@ -156,6 +170,16 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   if (transaction.type === "debit" || transaction.type === "credit") {
     after(async () => {
       try {
+        // Implausibly large amount: leave it flagged for review (the
+        // needs_category_review insert default still stands) rather than
+        // auto-resolving it as a bill payment or assigning a spend category.
+        if (suspiciousAmount) {
+          console.warn(
+            `Transaction ${transaction.id} has an implausible amount (${classified.amount}); left flagged for review, skipping auto-categorization.`
+          );
+          return;
+        }
+
         if (transaction.type === "debit") {
           // Already tagged as a bill payment at classify time (BillDesk,
           // CRED) - skip categorization outright. Previously this fell

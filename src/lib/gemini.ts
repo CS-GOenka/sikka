@@ -18,6 +18,15 @@ export type CategoryOption = {
   parentName: string | null;
 };
 
+// Categories that are actions, not spending buckets. They're offered in the
+// manual picker (see CategoryPicker's "Actions" group) but must never be
+// options the model can choose - otherwise an ambiguous payee the model
+// can't place (e.g. a truncated merchant name, or a person's name) gets
+// answered "Ignore" and silently dropped from spend, and worse, cached. Real
+// person-to-person and merchant transactions can't be auto-ignored as a
+// result.
+const ACTION_CATEGORY_NAMES = new Set(["Ignore"]);
+
 // Only "leaf" categories (no children) are offered to the model - parent
 // categories that have children (e.g. "Food & Dining") are just grouping
 // labels, and the more specific child should be picked instead.
@@ -51,7 +60,11 @@ export const getAssignableCategories = unstable_cache(fetchAssignableCategories,
 // categories table on every call, so renaming/adding a category needs no
 // code change here.
 export async function categorizeMerchant(payee: string): Promise<CategoryOption | null> {
-  const options = await getAssignableCategories();
+  // Action categories (e.g. "Ignore") are filtered out here, not in
+  // getAssignableCategories, so the manual picker still offers them while the
+  // model never sees them. An "Ignore" response therefore matches nothing
+  // below and falls through to null -> needs_review, never an auto-drop.
+  const options = (await getAssignableCategories()).filter((o) => !ACTION_CATEGORY_NAMES.has(o.name));
   const listing = options
     .map((o) => (o.parentName ? `${o.name} (${o.parentName})` : o.name))
     .join(", ");

@@ -1,16 +1,7 @@
 import { supabase } from "@/lib/supabase";
-import { getAssignableCategories } from "@/lib/gemini";
-import { PayeeCategoryPicker } from "@/components/PayeeCategoryPicker";
+import { CleanupTable, type CleanupRow } from "@/components/CleanupTable";
 
 export const dynamic = "force-dynamic";
-
-type CleanupRow = {
-  payee: string;
-  txCount: number;
-  totalInr: number;
-  firstDate: string | null;
-  lastDate: string | null;
-};
 
 export default async function CleanupPage() {
   const { data: parent } = await supabase.from("categories").select("id").eq("name", "Person-to-Person").single();
@@ -23,16 +14,26 @@ export default async function CleanupPage() {
     );
   }
 
-  const { data: children } = await supabase.from("categories").select("id").eq("parent_id", parent.id);
-  const categoryIds = [parent.id, ...(children ?? []).map((c) => c.id)];
+  // The two buckets a Person-to-Person payee can be split into. Read live from
+  // the category tree (children of Person-to-Person) so adding/renaming one
+  // needs no code change here.
+  const { data: children } = await supabase
+    .from("categories")
+    .select("id, name")
+    .eq("parent_id", parent.id)
+    .order("name");
+  const options = (children ?? []).map((c) => c.name);
 
+  // Only payees still sitting on the Person-to-Person *parent* itself are
+  // unresolved - once split into Friends/Family (real leaf categories) they
+  // drop off this queue.
   let allTx: { payee: string | null; amount: number | null; currency: string; transaction_date: string | null }[] = [];
   let offset = 0;
   while (true) {
     const { data, error } = await supabase
       .from("transactions")
       .select("payee, amount, currency, transaction_date")
-      .in("category_id", categoryIds)
+      .eq("category_id", parent.id)
       .not("payee", "is", null)
       .range(offset, offset + 999);
     if (error) {
@@ -64,53 +65,16 @@ export default async function CleanupPage() {
   }
 
   const rows = [...byPayee.values()].sort((a, b) => b.totalInr - a.totalInr);
-  const categories = await getAssignableCategories();
 
   return (
     <main className="flex flex-col gap-4 p-6">
       <h1 className="text-xl font-semibold">Person-to-Person cleanup</h1>
       <p className="text-sm text-zinc-500">
-        {rows.length} unique payee{rows.length === 1 ? "" : "s"} currently under Person-to-Person or a child category.
-        Recategorizing a payee here updates every transaction from that payee at once, and it drops off this list.
+        {rows.length} unique payee{rows.length === 1 ? "" : "s"} still to split into Friends or Family. Set each
+        one, then click Save — every transaction from that payee is updated at once and drops off this list.
       </p>
 
-      <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-        <table className="min-w-full text-sm">
-          <thead className="bg-zinc-50 text-left dark:bg-zinc-900">
-            <tr>
-              <th className="px-3 py-2 font-medium">Payee</th>
-              <th className="px-3 py-2 font-medium">Tx count</th>
-              <th className="px-3 py-2 font-medium">Total ₹</th>
-              <th className="px-3 py-2 font-medium">First</th>
-              <th className="px-3 py-2 font-medium">Last</th>
-              <th className="px-3 py-2 font-medium">Recategorize</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.payee} className="border-t border-zinc-200 dark:border-zinc-800">
-                <td className="px-3 py-2">{row.payee}</td>
-                <td className="px-3 py-2 text-zinc-500">{row.txCount}</td>
-                <td className="whitespace-nowrap px-3 py-2 font-medium">
-                  {row.totalInr.toLocaleString("en-IN")}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-zinc-500">{row.firstDate ?? "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-zinc-500">{row.lastDate ?? "—"}</td>
-                <td className="px-3 py-2">
-                  <PayeeCategoryPicker payee={row.payee} categories={categories} />
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-zinc-500">
-                  Nothing left to clean up.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <CleanupTable rows={rows} options={options} />
     </main>
   );
 }
