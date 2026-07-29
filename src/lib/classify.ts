@@ -417,6 +417,23 @@ export function classify(text: string | null | undefined): ClassifyResult {
   ).exec(t);
   if (m) {
     const rawCode = m[5].trim();
+    // INFT = ICICI internet fund transfer - a bank-to-bank/account transfer,
+    // never a purchase. It's how this account pays credit-card bills (later
+    // confirmed by a separate "payment received on your ICICI Bank Credit
+    // Card" SMS), and occasionally other transfers. Mark it a transfer up
+    // front so it's excluded from spend and never fires a budget alert while
+    // awaiting confirmation; the confirmation upgrades it to a labeled
+    // "Credit Card Bill Payment". The opaque ref (e.g. INFT*FGX8) can't tell a
+    // CC payment from another transfer, so we default to transfer either way.
+    if (/^INFT\*/i.test(rawCode)) {
+      return result({
+        type: "debit", paymentMethod: "neft", status: "success",
+        accountType: "savings", isTransfer: true, cardOrAccount: m[1],
+        payee: "Bank Transfer", note: rawCode,
+        amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
+        transactionDate: parseDate(m[3]),
+      });
+    }
     const label = KNOWN_CODE_LABELS[rawCode.toLowerCase()];
     const status: TransactionStatus = /\bdeclined\b|insufficient funds/i.test(t) ? "failed" : "success";
     return result({

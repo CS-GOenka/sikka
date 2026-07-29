@@ -84,10 +84,13 @@ export async function POST(request: NextRequest) {
   }
 
   // Recategorizing fully resolves the row - clears both reasons it could
-  // have been in the review queue (AI uncertainty and a manual star).
+  // have been in the review queue (AI uncertainty and a manual star). Also
+  // clears is_transfer: assigning a real spending category means the user is
+  // saying this is spend, not a transfer (e.g. reclaiming an INFT that
+  // defaulted to a transfer but was actually a person-to-person payment).
   const { error: updateError } = await supabase
     .from("transactions")
-    .update({ category_id: category.id, needs_category_review: false, starred: false })
+    .update({ category_id: category.id, needs_category_review: false, starred: false, is_transfer: false })
     .eq("id", transactionId);
 
   if (updateError) {

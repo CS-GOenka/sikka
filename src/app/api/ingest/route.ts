@@ -11,7 +11,24 @@ import {
 } from "@/lib/ccBillPaymentResolution";
 import { notifyBudgetForSpend } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
+import { sendPushToAll } from "@/lib/push";
 import { startTiming } from "@/lib/timing";
+
+// Fires when a debit is confirmed as a credit-card bill payment (in either
+// arrival order), so the user gets a positive "payment received" signal.
+async function fireCcPaymentSuccessPush(amount: number | null): Promise<void> {
+  const amt = amount != null ? `₹${amount.toLocaleString("en-IN")}` : "A payment";
+  try {
+    await sendPushToAll({
+      title: "✅ Credit card payment received",
+      body: `${amt} paid to your ICICI credit card`,
+      tag: "sikka-ccpay",
+      url: "/transactions",
+    });
+  } catch (err) {
+    console.error("CC payment success push failed:", err);
+  }
+}
 
 export const maxDuration = 60;
 
@@ -231,6 +248,23 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
             card_or_account: classified.cardOrAccount,
           });
           if (ccOutcome.resolved) {
+            await fireCcPaymentSuccessPush(classified.amount);
+            return;
+          }
+
+          // A bank fund transfer (INFT) that isn't a confirmed CC payment yet.
+          // It's already marked is_transfer at classify time, so it's excluded
+          // from spend and won't fire a budget alert. Don't LLM-categorize it;
+          // just clear the review flag. If a "payment received" confirmation
+          // later arrives, it's auto-labeled a CC bill payment and notified.
+          if (classified.isTransfer) {
+            const { error: transferError } = await supabase
+              .from("transactions")
+              .update({ needs_category_review: false })
+              .eq("id", transaction.id);
+            if (transferError) {
+              console.error(`Failed to clear review flag for transfer ${transaction.id}:`, transferError);
+            }
             return;
           }
         }
@@ -282,6 +316,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
         const outcome = await tryResolveDebitForConfirmation(message);
         if (outcome.resolved) {
           console.log(`Resolved debit ${outcome.transactionId} as a credit card bill payment from a confirmation SMS`);
+          await fireCcPaymentSuccessPush(outcome.amount ?? null);
         }
       } catch (err) {
         console.error("Reverse CC bill payment resolution failed:", err);

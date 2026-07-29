@@ -129,6 +129,7 @@ export interface DebitResolutionOutcome {
   resolved: boolean;
   reason: "resolved" | "not_a_confirmation" | "unparseable" | "query_error" | "no_match" | "ambiguous_match" | "update_error";
   transactionId?: number;
+  amount?: number;
 }
 
 // The reverse direction of tryResolveCcBillPayment. tryResolveCcBillPayment
@@ -188,5 +189,5 @@ export async function tryResolveDebitForConfirmation(confirmationText: string): 
     return { resolved: false, reason: "update_error" };
   }
 
-  return { resolved: true, reason: "resolved", transactionId: matches[0].id };
+  return { resolved: true, reason: "resolved", transactionId: matches[0].id, amount: confirmedAmount };
 }
