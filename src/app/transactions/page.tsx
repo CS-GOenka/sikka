@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { CategoryPicker } from "@/components/CategoryPicker";
 import { StarToggle } from "@/components/StarToggle";
+import { RefreshOnVisible } from "@/components/RefreshOnVisible";
 import { formatReceived } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 
@@ -83,6 +84,7 @@ async function renderTransactionsPage(
 
   return (
     <main className="flex flex-col gap-4 p-6">
+      <RefreshOnVisible />
       <h1 className="text-xl font-semibold">Transactions</h1>
       <p className="text-sm text-zinc-500">{total} total</p>
 

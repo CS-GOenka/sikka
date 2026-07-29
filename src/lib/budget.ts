@@ -105,6 +105,7 @@ interface NotifyRow {
   is_transfer: boolean;
   currency: string;
   category_id: number | null;
+  payee: string | null;
   categories: { name: string; counts_as_spend: boolean } | null;
   raw_messages: { phone_received_at: string | null } | null;
 }
@@ -120,7 +121,7 @@ export async function notifyBudgetForSpend(transactionId: number, nowMs: number 
     const { data: txn, error } = await supabase
       .from("transactions")
       .select(
-        "amount, type, status, is_transfer, currency, category_id, categories(name, counts_as_spend), raw_messages(phone_received_at)"
+        "amount, type, status, is_transfer, currency, category_id, payee, categories(name, counts_as_spend), raw_messages(phone_received_at)"
       )
       .eq("id", transactionId)
       .single<NotifyRow>();
@@ -154,17 +155,21 @@ export async function notifyBudgetForSpend(transactionId: number, nowMs: number 
 
     const amount = txn.amount as number;
     const categoryName = txn.category_id == null ? "Uncategorized" : txn.categories?.name ?? "Uncategorized";
+    const payeeLabel = txn.payee?.trim() || null;
 
-    const title = `−${formatInr(amount)} · ${categoryName}`;
+    // Title leads with the amount and who it was paid to (the most recognizable
+    // at a glance); the category and budget status go in the body.
+    const title = payeeLabel ? `−${formatInr(amount)} · ${payeeLabel}` : `−${formatInr(amount)} · ${categoryName}`;
     let body: string;
     if (dailyBudget == null) {
-      body = `Spent today: ${formatInr(todayTotal)} · set a daily budget in Settings`;
+      body = `${categoryName} · spent today ${formatInr(todayTotal)} · set a daily budget in Settings`;
     } else {
       const remaining = dailyBudget - todayTotal;
-      body =
+      const budgetStatus =
         remaining >= 0
-          ? `${formatInr(remaining)} left today · ${formatInr(todayTotal)} of ${formatInr(dailyBudget)}`
-          : `${formatInr(-remaining)} over budget · ${formatInr(todayTotal)} of ${formatInr(dailyBudget)}`;
+          ? `${formatInr(remaining)} left today`
+          : `${formatInr(-remaining)} over budget`;
+      body = `${categoryName} · ${budgetStatus} · ${formatInr(todayTotal)} of ${formatInr(dailyBudget)}`;
     }
 
     await sendPushToAll({ title, body, tag: "sikka-budget", url: "/transactions" });

@@ -4,7 +4,11 @@ import { supabase } from "@/lib/supabase";
 import { classify } from "@/lib/classify";
 import { categorizeTransaction } from "@/lib/categorize";
 import { tryResolveRefundReference } from "@/lib/refundResolution";
-import { tryResolveCcBillPayment } from "@/lib/ccBillPaymentResolution";
+import {
+  tryResolveCcBillPayment,
+  isCcPaymentConfirmation,
+  tryResolveDebitForConfirmation,
+} from "@/lib/ccBillPaymentResolution";
 import { notifyBudgetForSpend } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { startTiming } from "@/lib/timing";
@@ -263,6 +267,24 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
         }
       } catch (err) {
         console.error(`Background categorization failed for transaction ${transaction.id}:`, err);
+      }
+    });
+  }
+
+  // If this message is a "payment received on your ICICI Bank Credit Card"
+  // confirmation, retroactively resolve the debit that paid it. The debit is
+  // often ingested before this confirmation arrives, so its own forward
+  // matching (tryResolveCcBillPayment) found nothing at the time - this closes
+  // that gap regardless of arrival order.
+  if (isCcPaymentConfirmation(message)) {
+    after(async () => {
+      try {
+        const outcome = await tryResolveDebitForConfirmation(message);
+        if (outcome.resolved) {
+          console.log(`Resolved debit ${outcome.transactionId} as a credit card bill payment from a confirmation SMS`);
+        }
+      } catch (err) {
+        console.error("Reverse CC bill payment resolution failed:", err);
       }
     });
   }

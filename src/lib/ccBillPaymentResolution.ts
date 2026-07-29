@@ -120,3 +120,73 @@ export async function tryResolveCcBillPayment(transaction: {
 
   return { resolved: true, reason: "resolved", matchedRawMessageId: matches[0].id, matchedDate: matches[0].date };
 }
+
+export function isCcPaymentConfirmation(text: string): boolean {
+  return CONFIRMATION_PATTERN.test(text);
+}
+
+export interface DebitResolutionOutcome {
+  resolved: boolean;
+  reason: "resolved" | "not_a_confirmation" | "unparseable" | "query_error" | "no_match" | "ambiguous_match" | "update_error";
+  transactionId?: number;
+}
+
+// The reverse direction of tryResolveCcBillPayment. tryResolveCcBillPayment
+// runs when a *debit* is ingested and looks for a matching confirmation; but
+// the confirmation SMS often arrives minutes after the debit (verified: a
+// ₹51,000 debit landed 34 min before its confirmation), so at debit-ingest
+// time there was nothing to match and the debit fell through to normal
+// categorization. This runs when a *confirmation* is ingested and looks back
+// for the debit that paid it, closing that ordering gap in either arrival
+// order. Only acts on a single unambiguous match.
+export async function tryResolveDebitForConfirmation(confirmationText: string): Promise<DebitResolutionOutcome> {
+  const m = CONFIRMATION_PATTERN.exec(confirmationText);
+  if (!m) return { resolved: false, reason: "not_a_confirmation" };
+
+  const confirmedAmount = parseConfirmationAmount(m[1]);
+  const cardRef = m[2];
+  const confirmedDate = parseDate(m[3]);
+  if (Number.isNaN(confirmedAmount) || !confirmedDate) {
+    return { resolved: false, reason: "unparseable" };
+  }
+
+  const { data: candidates, error } = await supabase
+    .from("transactions")
+    .select("id, amount, transaction_date, account_type, card_or_account, payee")
+    .eq("type", "debit")
+    .eq("is_transfer", false)
+    .gte("amount", confirmedAmount - 0.01)
+    .lte("amount", confirmedAmount + 0.01);
+
+  if (error || !candidates) {
+    console.error("Failed to search debits for CC bill payment confirmation:", error);
+    return { resolved: false, reason: "query_error" };
+  }
+
+  const matches = candidates.filter((c) => {
+    if (c.payee === "Credit Card Bill Payment") return false; // already tagged
+    if (!c.transaction_date) return false;
+    if (daysBetween(confirmedDate, c.transaction_date) > 3) return false;
+    // Only enforce the card match when the debit itself carries a card ref (a
+    // credit-card-side debit). Savings-side transfers to the card have none.
+    if (c.account_type === "credit_card" && c.card_or_account) {
+      if (last4Digits(c.card_or_account) !== last4Digits(cardRef)) return false;
+    }
+    return true;
+  });
+
+  if (matches.length === 0) return { resolved: false, reason: "no_match" };
+  if (matches.length > 1) return { resolved: false, reason: "ambiguous_match" };
+
+  const { error: updateError } = await supabase
+    .from("transactions")
+    .update({ is_transfer: true, payee: "Credit Card Bill Payment", category_id: null, needs_category_review: false })
+    .eq("id", matches[0].id);
+
+  if (updateError) {
+    console.error(`Failed to mark debit ${matches[0].id} as a credit card bill payment:`, updateError);
+    return { resolved: false, reason: "update_error" };
+  }
+
+  return { resolved: true, reason: "resolved", transactionId: matches[0].id };
+}
