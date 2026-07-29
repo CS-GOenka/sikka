@@ -29,7 +29,14 @@ export function isSelfTransfer(payee: string | null): boolean {
   return SELF_TRANSFER_NAMES.includes(payee.trim().toLowerCase());
 }
 
-export type CategorizeSource = "hardcoded" | "cache" | "llm" | "llm_uncertain" | "llm_p2p_unconfirmed" | "no_payee";
+export type CategorizeSource =
+  | "hardcoded"
+  | "cache"
+  | "llm"
+  | "llm_uncertain"
+  | "llm_p2p_unconfirmed"
+  | "person_match_unconfirmed"
+  | "no_payee";
 
 export interface CategorizeOutcome {
   id: number;
@@ -75,6 +82,43 @@ async function getPersonToPersonCategoryIds(): Promise<Set<number>> {
   const ids = new Set<number>([parent.id, ...(children ?? []).map((c) => c.id)]);
   personToPersonCategoryIdsCache = ids;
   return ids;
+}
+
+function nameWords(s: string): string[] {
+  return s.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+// Different rails truncate the same person's name differently - a UPI transfer
+// carries "SUBHAM GOENKA" while a NEFT reference carries only "SUBHAM". The
+// merchant_categories cache is keyed on the exact string, so a manual
+// "Subham Goenka -> Family" doesn't cover a later "Subham", which then falls to
+// the LLM and gets a Friends/Family coin-flip. This links them: if the payee is
+// a strict leading-name form of exactly one *manually-confirmed* Person-to-
+// Person entry (or vice-versa), inherit that category. Requires an unambiguous
+// single match so two different same-first-name people can't collide.
+async function findManualPersonMatch(payee: string, p2pIds: Set<number>): Promise<number | null> {
+  const target = nameWords(payee);
+  if (target.length === 0) return null;
+
+  const { data, error } = await supabase
+    .from("merchant_categories")
+    .select("payee, category_id")
+    .eq("confidence_source", "manual");
+  if (error || !data) return null;
+
+  const matchedCategories = new Set<number>();
+  for (const row of data) {
+    if (!p2pIds.has(row.category_id)) continue;
+    const words = nameWords(row.payee);
+    // Directional: only inherit when `payee` is a strict leading truncation of
+    // a fuller confirmed name (e.g. "Subham" -> "Subham Goenka"). The reverse
+    // must NOT match - a fuller new name like "Subham Verma" must never inherit
+    // a bare "Subham" entry, since it could be a different person.
+    if (target.length < words.length && target.every((w, i) => w === words[i])) {
+      matchedCategories.add(row.category_id);
+    }
+  }
+  return matchedCategories.size === 1 ? [...matchedCategories][0] : null;
 }
 
 // Categorizes a single transaction: hardcoded investment rules first (no
@@ -134,15 +178,27 @@ export async function categorizeTransaction(row: {
       console.error(`Failed to check merchant_categories cache for "${payee}":`, cacheError);
     }
 
+    const p2pIds = await getPersonToPersonCategoryIds();
+    const personMatch = cached?.category_id ? null : await findManualPersonMatch(payee, p2pIds);
+
     if (cached?.category_id) {
       categoryId = cached.category_id;
       needsReview = false;
       source = "cache";
+    } else if (personMatch !== null) {
+      // Same person as an existing manually-confirmed P2P entry, matched by a
+      // truncated name (e.g. NEFT "Subham" vs UPI-confirmed "Subham Goenka").
+      // Inherit that category instead of letting the LLM coin-flip Friends vs
+      // Family, but keep needs_review=true and don't cache under this string -
+      // it surfaces once to confirm the link, then normal caching takes over.
+      categoryId = personMatch;
+      needsReview = true;
+      source = "person_match_unconfirmed";
     } else {
       try {
         const match = await categorizeMerchant(payee);
 
-        if (match !== null && (await getPersonToPersonCategoryIds()).has(match.id)) {
+        if (match !== null && p2pIds.has(match.id)) {
           // Person-to-Person is where a truncated or ambiguous business
           // name most often gets defaulted to without real evidence (per
           // the merchant_categories cache audit). Assign it as a tentative
