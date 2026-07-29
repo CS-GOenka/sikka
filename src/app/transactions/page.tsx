@@ -19,6 +19,7 @@ type TransactionRow = {
   transaction_date: string | null;
   type: string;
   payment_method: string;
+  is_transfer: boolean;
   starred: boolean;
   categories: { name: string } | null;
   raw_messages: { created_at: string; phone_received_at: string | null } | null;
@@ -55,7 +56,7 @@ async function renderTransactionsPage(
     supabase
       .from("transactions")
       .select(
-        "id, payee, amount, currency, transaction_date, type, payment_method, starred, categories(name), raw_messages(created_at, phone_received_at)",
+        "id, payee, amount, currency, transaction_date, type, payment_method, is_transfer, starred, categories(name), raw_messages(created_at, phone_received_at)",
         // "estimated" trades exact precision for speed that doesn't degrade
         // as the table grows - uses Postgres's own table statistics instead
         // of a real COUNT(*) scan. Fine for a "N total" label.
@@ -130,11 +131,20 @@ async function renderTransactionsPage(
                 <td className="px-3 py-2 text-zinc-500">{row.type}</td>
                 <td className="px-3 py-2 text-zinc-500">{row.payment_method}</td>
                 <td className="px-3 py-2">
-                  <CategoryPicker
-                    transactionId={row.id}
-                    currentCategoryName={row.categories?.name ?? null}
-                    categories={categories}
-                  />
+                  {row.is_transfer ? (
+                    <span
+                      className="inline-flex items-center rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                      title="Transfer (e.g. credit-card bill payment) — excluded from spend"
+                    >
+                      Transfer · not spend
+                    </span>
+                  ) : (
+                    <CategoryPicker
+                      transactionId={row.id}
+                      currentCategoryName={row.categories?.name ?? null}
+                      categories={categories}
+                    />
+                  )}
                 </td>
               </tr>
             ))}

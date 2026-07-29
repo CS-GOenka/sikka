@@ -135,15 +135,28 @@ def fetch_recent_icici_messages():
     )
 
     messages = []
+    skipped = []  # (reason, snippet, iso) for chat.db rows that look ICICI-ish but were dropped
     for text_col, attributed_body, msg_date in cur:
         full_text = get_message_text(text_col, attributed_body)
+        # Diagnostic probe of the raw row (text + best-effort blob decode) so we
+        # can tell "message not on the Mac at all" from "on the Mac but our
+        # extraction dropped it".
+        raw_probe = (text_col or "")
+        if attributed_body:
+            raw_probe += " " + attributed_body.decode("utf-8", errors="ignore")
+        low_probe = raw_probe.lower()
+        looks_iciciish = ("icici" in low_probe) or ("credit card" in low_probe)
+
         if not full_text or TARGET not in full_text.lower():
+            if looks_iciciish:
+                skipped.append(("no_extract_or_no_target", (full_text or raw_probe)[:120], apple_ns_to_iso(msg_date)))
             continue
         if is_sensitive(full_text):
+            skipped.append(("sensitive", full_text[:120], apple_ns_to_iso(msg_date)))
             continue
         messages.append((full_text, apple_ns_to_iso(msg_date)))
     conn.close()
-    return messages
+    return messages, skipped
 
 
 def post_message(message, phone_received_at):
@@ -161,9 +174,18 @@ def post_message(message, phone_received_at):
 
 
 def main():
-    messages = fetch_recent_icici_messages()
+    messages, skipped = fetch_recent_icici_messages()
     print(f"{datetime.utcnow().isoformat()}Z: scanning last {LOOKBACK_DAYS} days, "
           f"found {len(messages)} ICICI messages to re-sync")
+
+    # Diagnostic: surface anything that reached chat.db but we chose not to send.
+    # An expected message showing up here means our extraction/filter is the
+    # culprit; a message that never appears in either list means it never made
+    # it onto the Mac (Text Message Forwarding / Shortcut gap).
+    if skipped:
+        print(f"  {len(skipped)} ICICI-looking chat.db rows were skipped (not sent):")
+        for reason, snippet, iso in skipped:
+            print(f"    SKIP[{reason}] {iso}: {snippet!r}")
 
     ok = 0
     failed = 0
