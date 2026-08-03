@@ -1,5 +1,5 @@
 {
   "crons": [
-    { "path": "/api/health/capture-check", "schedule": "0 4,10,16 * * *" }
+    { "path": "/api/health/capture-check", "schedule": "0 16 * * *" }
   ]
 }

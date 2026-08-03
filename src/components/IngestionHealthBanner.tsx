@@ -7,8 +7,12 @@ import { useEffect, useState } from "react";
 // app, instead of being discovered days later. Checks on load, on resume, and
 // every few minutes.
 export function IngestionHealthBanner() {
-  const [stale, setStale] = useState(false);
-  const [ageMinutes, setAgeMinutes] = useState<number | null>(null);
+  const [health, setHealth] = useState<{
+    stale: boolean;
+    ageMinutes: number | null;
+    captureStale: boolean;
+    captureAgeHours: number | null;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -18,8 +22,12 @@ export function IngestionHealthBanner() {
         .then((r) => r.json())
         .then((j) => {
           if (cancelled) return;
-          setStale(!!j.stale);
-          setAgeMinutes(typeof j.ageMinutes === "number" ? j.ageMinutes : null);
+          setHealth({
+            stale: !!j.stale,
+            ageMinutes: typeof j.ageMinutes === "number" ? j.ageMinutes : null,
+            captureStale: !!j.captureStale,
+            captureAgeHours: typeof j.captureAgeHours === "number" ? j.captureAgeHours : null,
+          });
         })
         .catch(() => {});
     };
@@ -33,13 +41,23 @@ export function IngestionHealthBanner() {
     };
   }, []);
 
-  if (!stale) return null;
-  const age =
-    ageMinutes == null ? "a while" : ageMinutes >= 120 ? `${Math.floor(ageMinutes / 60)}h` : `${ageMinutes}m`;
+  if (!health || (!health.stale && !health.captureStale)) return null;
 
-  return (
-    <div className="bg-red-600 px-4 py-2 text-center text-sm font-medium text-white">
-      ⚠️ Ingestion may be down — the reconcile last checked in {age} ago. New transactions could be missing.
-    </div>
-  );
+  // Capture staleness (nothing ingested) is the more serious signal - it means
+  // transactions are actually being missed - so it takes precedence.
+  let message: string;
+  if (health.captureStale) {
+    const h = health.captureAgeHours == null ? "8h+" : `${Math.floor(health.captureAgeHours)}h`;
+    message = `⚠️ No transactions captured in ${h} — the SMS pipeline may be down.`;
+  } else {
+    const age =
+      health.ageMinutes == null
+        ? "a while"
+        : health.ageMinutes >= 120
+          ? `${Math.floor(health.ageMinutes / 60)}h`
+          : `${health.ageMinutes}m`;
+    message = `⚠️ Ingestion may be down — the reconcile last checked in ${age} ago.`;
+  }
+
+  return <div className="bg-red-600 px-4 py-2 text-center text-sm font-medium text-white">{message}</div>;
 }

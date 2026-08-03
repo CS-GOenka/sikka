@@ -17,13 +17,36 @@ export async function POST() {
   return NextResponse.json({ status: "OK" });
 }
 
-// GET: health status for the in-app banner. Uses select("*") so a missing
-// column (pre-migration) doesn't error. Only reports stale once there has been
-// at least one ping, to avoid a false alarm before the cron is wired up.
+const CAPTURE_STALE_HOURS = 8;
+
+// GET: health status for the in-app banner. Reports both the reconcile
+// heartbeat (is the Mac cron alive?) and capture freshness (has anything been
+// ingested recently?), so an outage surfaces the moment you open the app -
+// complementing the once-a-day Vercel cron. Uses select("*") so a missing
+// column (pre-migration) doesn't error.
 export async function GET() {
   const { data } = await supabase.from("settings").select("*").eq("id", 1).maybeSingle();
   const last = (data as { last_reconcile_ping?: string | null } | null)?.last_reconcile_ping ?? null;
   const ageMinutes = last ? Math.floor((Date.now() - Date.parse(last)) / 60000) : null;
   const stale = last !== null && ageMinutes !== null && ageMinutes > STALE_MINUTES;
-  return NextResponse.json({ status: "OK", lastPing: last, ageMinutes, stale });
+
+  const { data: tx } = await supabase
+    .from("transactions")
+    .select("created_at")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const lastCapture = (tx as { created_at?: string } | null)?.created_at ?? null;
+  const captureAgeHours = lastCapture ? (Date.now() - Date.parse(lastCapture)) / (60 * 60 * 1000) : null;
+  const captureStale = captureAgeHours !== null && captureAgeHours > CAPTURE_STALE_HOURS;
+
+  return NextResponse.json({
+    status: "OK",
+    lastPing: last,
+    ageMinutes,
+    stale,
+    lastCapture,
+    captureAgeHours: captureAgeHours === null ? null : Math.round(captureAgeHours * 10) / 10,
+    captureStale,
+  });
 }
