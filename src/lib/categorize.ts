@@ -63,6 +63,26 @@ async function getInvestmentsCategoryId(): Promise<number> {
   return data.id;
 }
 
+let indulgenceCategoryIdCache: number | null = null;
+
+async function getIndulgenceCategoryId(): Promise<number> {
+  if (indulgenceCategoryIdCache !== null) return indulgenceCategoryIdCache;
+  const { data, error } = await supabase.from("categories").select("id").eq("name", "Indulgence").single();
+  if (error || !data) {
+    throw new Error("Indulgence category not found in categories table");
+  }
+  indulgenceCategoryIdCache = data.id;
+  return data.id;
+}
+
+// Paan shops ("<name> Pan Shop", truncated to "Pan Sh") are an Indulgence.
+// Matched on the whole word "pan" followed by "sh(op)" so it catches the shops
+// without misfiring on people like "Pankaj", "Pritee Pandey" or "Shruti Panda".
+export function isPaanShop(payee: string | null): boolean {
+  if (!payee) return false;
+  return /\bpan\s+sh/i.test(payee);
+}
+
 let personToPersonCategoryIdsCache: Set<number> | null = null;
 
 // Person-to-Person and all of its children (e.g. "Friends and Family") -
@@ -150,8 +170,8 @@ export async function categorizeTransaction(row: {
     return { id: row.id, payee, categoryId: null, needsReview: false, source: "hardcoded" };
   }
 
-  if (isInvestmentTransaction(row)) {
-    categoryId = await getInvestmentsCategoryId();
+  if (isInvestmentTransaction(row) || isPaanShop(payee)) {
+    categoryId = isPaanShop(payee) ? await getIndulgenceCategoryId() : await getInvestmentsCategoryId();
     needsReview = false;
     source = "hardcoded";
     if (payee) {
@@ -199,14 +219,12 @@ export async function categorizeTransaction(row: {
         const match = await categorizeMerchant(payee);
 
         if (match !== null && p2pIds.has(match.id)) {
-          // Person-to-Person is where a truncated or ambiguous business
-          // name most often gets defaulted to without real evidence (per
-          // the merchant_categories cache audit). Assign it as a tentative
-          // answer so the transaction isn't left blank, but never cache
-          // it - surfaces once in /review for a one-time human decision.
-          // Once manually confirmed there, normal caching takes over and
-          // this exact payee is never asked about again.
-          categoryId = match.id;
+          // The LLM defaults ambiguous person names to a Person-to-Person
+          // bucket (usually "Friends") without real evidence. Applying that
+          // label reads as a confident, and often wrong, categorization. So
+          // leave it *uncategorized* and just flag it for review - the user
+          // decides Friends/Family/etc. Never cached.
+          categoryId = null;
           needsReview = true;
           source = "llm_p2p_unconfirmed";
         } else {
