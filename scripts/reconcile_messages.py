@@ -31,8 +31,9 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 
+BASE_URL = "https://sikka-mauve.vercel.app"
 DB_PATH = os.path.expanduser("~/Library/Messages/chat.db")
-INGEST_URL = "https://sikka-mauve.vercel.app/api/ingest"
+INGEST_URL = f"{BASE_URL}/api/ingest"
 TARGET = "icici bank"
 LOOKBACK_DAYS = 7
 
@@ -173,6 +174,20 @@ def post_message(message, phone_received_at):
         return None, str(e)
 
 
+def post_health(path, payload=None):
+    # Best-effort health signal to the app. Never lets a health call break the
+    # reconcile itself.
+    try:
+        data = json.dumps(payload or {}).encode()
+        req = urllib.request.Request(
+            f"{BASE_URL}{path}", data=data, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except Exception as e:
+        print(f"  health post to {path} failed: {e}", file=sys.stderr)
+
+
 def main():
     messages, skipped = fetch_recent_icici_messages()
     print(f"{datetime.utcnow().isoformat()}Z: scanning last {LOOKBACK_DAYS} days, "
@@ -199,6 +214,17 @@ def main():
 
     print(f"{datetime.utcnow().isoformat()}Z: done. {ok} OK, {failed} failed")
 
+    # Heartbeat: a successful chat.db read + re-sync. The app flags ingestion
+    # as stale (banner) if this stops arriving, so an outage can't hide.
+    post_health("/api/health/ping")
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # e.g. sqlite3 "authorization denied" when Full Disk Access is revoked.
+        # Alert immediately instead of failing silently for days.
+        print(f"{datetime.utcnow().isoformat()}Z: FATAL {type(e).__name__}: {e}", file=sys.stderr)
+        post_health("/api/health/alert", {"message": f"Reconcile failed: {type(e).__name__}: {e}"})
+        raise
