@@ -35,7 +35,9 @@ BASE_URL = "https://sikka-mauve.vercel.app"
 DB_PATH = os.path.expanduser("~/Library/Messages/chat.db")
 INGEST_URL = f"{BASE_URL}/api/ingest"
 TARGET = "icici bank"
-LOOKBACK_DAYS = 7
+# 10 days (not 7) so a delayed iCloud/Messages sync still lands inside the
+# window whenever it eventually completes, rather than aging out permanently.
+LOOKBACK_DAYS = 10
 
 SENSITIVE_PATTERNS = [
     re.compile(r"otp", re.I),
