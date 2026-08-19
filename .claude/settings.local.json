@@ -91,7 +91,15 @@
       "Bash(tee /private/tmp/claude-501/-Users-saurabhgoenka-sikka/ddcb55bb-6b11-4b31-8682-8a33e74fb562/scratchpad/backfill_run3.log)",
       "Bash(git -C /Users/saurabhgoenka/sikka status --short)",
       "Bash(git -C /Users/saurabhgoenka/sikka log --oneline -5)",
-      "Bash(git -C /Users/saurabhgoenka/sikka add .gitignore .claude/settings.local.json)"
+      "Bash(git -C /Users/saurabhgoenka/sikka add .gitignore .claude/settings.local.json)",
+      "Bash(npx tsx -e ' *)",
+      "Bash(npx tsx *)",
+      "Bash(git -C /Users/saurabhgoenka/sikka log --oneline -1)",
+      "Bash(git -C /Users/saurabhgoenka/sikka log origin/main..HEAD --oneline)",
+      "Bash(npx next *)",
+      "Bash(pmset -g)",
+      "Bash(pmset -g sched)",
+      "Bash(git reset *)"
     ]
   }
 }
