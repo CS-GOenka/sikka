@@ -30,6 +30,39 @@ async function fireCcPaymentSuccessPush(amount: number | null): Promise<void> {
   }
 }
 
+// Receipt time for a sender that didn't supply one (the Share Sheet shortcut).
+//
+// Same-day SMS  -> now. Accurate, and the only value that lets the row show up
+//                  in /capture-check's rolling 1h/6h windows.
+// Older SMS     -> 12:00 IST on the date parsed from the text. Backdated
+//                  capture is the Share Sheet's whole purpose, so "now" would
+//                  file a two-day-old spend under today's budget. Midday sits
+//                  safely inside a budget day whatever the reset hour, unlike
+//                  midnight, which a 03:00 reset would push into the day before.
+// No date       -> now, as the only thing left.
+const IST_OFFSET_MS = 330 * 60 * 1000;
+
+function fallbackReceivedAt(transactionDate: string | null, nowMs: number = Date.now()): string {
+  const m = transactionDate ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(transactionDate) : null;
+  if (m) {
+    // Is the SMS dated today, on the IST clock the rest of the app uses?
+    const istNow = new Date(nowMs + IST_OFFSET_MS);
+    const sameDay =
+      istNow.getUTCFullYear() === +m[1] &&
+      istNow.getUTCMonth() === +m[2] - 1 &&
+      istNow.getUTCDate() === +m[3];
+    // Same-day capture: "now" is both accurate (you share it when you see it)
+    // and the only value that puts the row in /capture-check's rolling 1h/6h
+    // windows - the whole point of that screen is confirming a capture just
+    // landed, so a midday anchor would hide it there.
+    if (sameDay) return new Date(nowMs).toISOString();
+    const istNoonMs = Date.UTC(+m[1], +m[2] - 1, +m[3], 12, 0, 0, 0) - IST_OFFSET_MS;
+    // Never invent a future receipt time (a mis-parsed or post-dated SMS).
+    if (istNoonMs <= nowMs) return new Date(istNoonMs).toISOString();
+  }
+  return new Date(nowMs).toISOString();
+}
+
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
@@ -62,7 +95,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // boundary (created_at is unreliable for backfilled rows).
   const phoneReceivedAt = normalizePhoneReceivedAt(rawPhoneReceivedAt);
   if (rawPhoneReceivedAt != null && phoneReceivedAt === null) {
-    console.warn("Unrecognized phoneReceivedAt format, storing null:", rawPhoneReceivedAt);
+    console.warn("Unrecognized phoneReceivedAt format, falling back to the SMS date:", rawPhoneReceivedAt);
   }
 
   if (typeof message !== "string" || message.trim().length === 0) {
@@ -113,6 +146,27 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ status: "OK" });
   }
 
+  // Classification is pure regex (no external calls), so it runs inline -
+  // every message that reaches here is classified automatically, with no
+  // manual trigger required. It runs before the raw_messages insert because
+  // the receipt-time fallback below uses the date it parses out of the SMS.
+  const classified = classify(message);
+
+  // A sender that omits phoneReceivedAt entirely - notably the "Send to Sikka"
+  // Share Sheet shortcut, which posts only { message } - used to store null
+  // here. That looked harmless because classification and categorization ran
+  // normally, but phone_received_at is the anchor for every spend query:
+  // computeTodaySpend and /capture-check both filter a range over it with an
+  // !inner join, and notifyBudgetForSpend bails on a missing value. A null
+  // therefore made a correctly-classified transaction silently invisible in
+  // budget totals, in Capture Check, and to budget alerts - a manual capture
+  // that looked captured but did not count.
+  //
+  // So fall back rather than storing null. The display layer already treats
+  // created_at as an acceptable proxy for receipt time (see formatReceived);
+  // this makes the spend layer agree instead of dropping the row.
+  const effectivePhoneReceivedAt = phoneReceivedAt ?? fallbackReceivedAt(classified.transactionDate);
+
   let rawMessageId: number;
   if (existing) {
     rawMessageId = existing.id;
@@ -120,7 +174,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     try {
       const { data, error } = await supabase
         .from("raw_messages")
-        .insert({ message, phone_received_at: phoneReceivedAt })
+        .insert({ message, phone_received_at: effectivePhoneReceivedAt })
         .select("id")
         .single();
 
@@ -146,11 +200,6 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
       );
     }
   }
-
-  // Classification is pure regex (no external calls), so it runs inline -
-  // every message that reaches here is classified automatically, with no
-  // manual trigger required.
-  const classified = classify(message);
 
   // Sanity guard: a parsed amount this large is far beyond any plausible
   // personal transaction (the largest real one on record is ~₹2 lakh) and
