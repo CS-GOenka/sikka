@@ -23,7 +23,12 @@ const ALERT_THROTTLE_HOURS = 6;
 // strictly worse than transaction silence - the Mac reconcile can only re-send
 // messages that reached chat.db, so anything the phone never forwarded is lost
 // rather than merely late.
-const PHONE_HEARTBEAT_GAP_MINUTES = 90;
+//
+// 60m against a ~30m ping interval means two consecutive missed pings trip the
+// alert (age passes 60 just after the second miss); one late or dropped ping
+// stays quiet. The single source of truth for this threshold - nothing else,
+// display or check, carries its own copy.
+const PHONE_HEARTBEAT_GAP_MINUTES = 60;
 const PHONE_ALERT_THROTTLE_HOURS = 6;
 
 export interface CaptureHealthResult {
