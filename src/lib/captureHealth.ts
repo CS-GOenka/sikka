@@ -1,38 +1,44 @@
-import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { sendPushToAll } from "@/lib/push";
 
-// Runs off a Vercel cron (see vercel.json) - deliberately independent of the
-// Mac, since the Mac (Shortcut + reconcile) is itself part of what's
-// unreliable. Checks how long since the most recent transaction was captured;
-// if that exceeds the threshold, it pushes an alert so a silent capture outage
-// is noticed the same day instead of days later.
+// Two independent "is capture still alive?" checks, run together by whatever
+// scheduler is driving them. Deliberately independent of both the Mac and the
+// phone, since those are exactly what's being watched.
 //
+// Extracted from the old /api/health/capture-check route so the scheduled
+// entry point can be swapped (GitHub Actions -> cron-job.org) without the
+// logic moving with it.
+
+// Check 1: transaction silence.
 // Trade-off: this can't distinguish "capture is down" from "genuinely no
-// transactions" - a very quiet stretch will alert. The cron only fires at
-// daytime-IST times (09:30 / 15:30 / 21:30 IST) so it never wakes you at night,
-// and 8h is long enough that a normal active day always has activity.
+// transactions" - a very quiet stretch will alert. 8h is long enough that a
+// normal active day always has activity.
 const GAP_HOURS = 8;
 // Don't re-push more than once per this window during a sustained outage, so
-// frequent heartbeat checks (GitHub Actions every ~30m) don't spam.
+// a ~30m check cadence doesn't spam.
 const ALERT_THROTTLE_HOURS = 6;
 
-// Second, independent signal: the iPhone Shortcuts automations POST
-// /api/heartbeat every ~30 minutes. Silence here means the automations
-// stopped firing, which is strictly worse than transaction silence - the Mac
-// reconcile can only re-send messages that reached chat.db, so anything the
-// phone never forwarded is lost rather than merely late.
-//
-// It lives in this route rather than a route of its own so there is one
-// scheduled trigger and one alerting path to reason about, not two that can
-// independently rot.
+// Check 2: the iPhone Shortcuts automations POST /api/heartbeat every ~30
+// minutes. Silence here means the automations stopped firing, which is
+// strictly worse than transaction silence - the Mac reconcile can only re-send
+// messages that reached chat.db, so anything the phone never forwarded is lost
+// rather than merely late.
 const PHONE_HEARTBEAT_GAP_MINUTES = 90;
 const PHONE_ALERT_THROTTLE_HOURS = 6;
 
-export async function GET() {
-  // Both checks read settings; fetch once. select("*") so a missing column
-  // (pre-migration) degrades to "no heartbeat recorded" instead of erroring
-  // and taking the transaction-silence check down with it.
+export interface CaptureHealthResult {
+  status: "OK" | "ERROR";
+  error?: string;
+  note?: string;
+  alerted?: boolean;
+  throttled?: boolean;
+  gapHours?: number;
+  pushSent?: number;
+  phone?: PhoneHeartbeatStatus;
+}
+
+export async function runCaptureHealthChecks(): Promise<CaptureHealthResult> {
+  // Both checks read settings; fetch once.
   const { data: settingsRow } = await supabase.from("settings").select("*").eq("id", 1).maybeSingle();
   const phone = await checkPhoneHeartbeat(settingsRow);
 
@@ -45,24 +51,24 @@ export async function GET() {
 
   if (error) {
     console.error("capture-check query failed:", error);
-    return NextResponse.json({ status: "ERROR", error: error.message }, { status: 500 });
+    return { status: "ERROR", error: error.message, phone };
   }
 
   const last = (data as { created_at?: string } | null)?.created_at ?? null;
   if (!last) {
-    return NextResponse.json({ status: "OK", alerted: false, note: "no transactions yet", phone });
+    return { status: "OK", alerted: false, note: "no transactions yet", phone };
   }
 
   const gapHours = (Date.now() - Date.parse(last)) / (60 * 60 * 1000);
   const roundedGap = Math.round(gapHours * 10) / 10;
   if (gapHours <= GAP_HOURS) {
-    return NextResponse.json({ status: "OK", alerted: false, gapHours: roundedGap, phone });
+    return { status: "OK", alerted: false, gapHours: roundedGap, phone };
   }
 
   // Throttle: skip if we already alerted within ALERT_THROTTLE_HOURS.
   const lastAlert = (settingsRow as { last_capture_alert_at?: string | null } | null)?.last_capture_alert_at ?? null;
   if (lastAlert && Date.now() - Date.parse(lastAlert) < ALERT_THROTTLE_HOURS * 60 * 60 * 1000) {
-    return NextResponse.json({ status: "OK", alerted: false, throttled: true, gapHours: roundedGap, phone });
+    return { status: "OK", alerted: false, throttled: true, gapHours: roundedGap, phone };
   }
 
   const hrs = Math.floor(gapHours);
@@ -74,7 +80,7 @@ export async function GET() {
   });
   await supabase.from("settings").upsert({ id: 1, last_capture_alert_at: new Date().toISOString() }, { onConflict: "id" });
   console.warn(`Capture heartbeat: ${hrs}h since last transaction; alert push sent to ${result.sent} device(s).`);
-  return NextResponse.json({ status: "OK", alerted: true, gapHours: roundedGap, pushSent: result.sent, phone });
+  return { status: "OK", alerted: true, gapHours: roundedGap, pushSent: result.sent, phone };
 }
 
 interface PhoneHeartbeatStatus {
@@ -86,7 +92,7 @@ interface PhoneHeartbeatStatus {
   pushSent?: number;
 }
 
-// Independent of the transaction-silence check above: a quiet spending day is
+// Independent of the transaction-silence check: a quiet spending day is
 // normal and says nothing about the phone, whereas the automations are
 // supposed to fire on a timer regardless of activity. That makes this the
 // sharper signal - it has no "genuinely nothing happened" false positive.
