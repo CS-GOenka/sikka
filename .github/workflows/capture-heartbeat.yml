@@ -1,14 +1,19 @@
 name: Capture heartbeat
 
-# Free, Mac-independent heartbeat for transaction capture. Vercel's Hobby plan
-# caps crons at once per day, so this GitHub Actions schedule hits the same
-# endpoint more often (~every 2h) for tighter same-day detection. The endpoint
-# itself decides whether to alert (>8h gap) and throttles duplicate pushes.
-# GitHub may delay scheduled runs by a few minutes, which is fine here.
+# Free, Mac- and phone-independent monitor. Vercel's Hobby plan caps crons at
+# once per day, so this GitHub Actions schedule hits the same endpoint more
+# often for tighter detection. The endpoint runs two checks and decides whether
+# to alert: transaction silence (>8h) and phone-heartbeat silence (>90m).
+#
+# Every 30m is set by the phone check: the iPhone automations ping every ~30m
+# and the threshold is 90m, so this cadence puts detection at 90-120m plus
+# whatever GitHub's scheduler adds. A slower cadence would blow the 90m target;
+# a faster one buys little, since GitHub delays scheduled runs under load
+# anyway (observed: up to ~40m late on this repo).
 
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
 jobs:
