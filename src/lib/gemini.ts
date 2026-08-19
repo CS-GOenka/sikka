@@ -1,5 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-import { unstable_cache } from "next/cache";
 import { supabase } from "@/lib/supabase";
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -46,13 +45,16 @@ async function fetchAssignableCategories(): Promise<CategoryOption[]> {
     }));
 }
 
-// Categories change rarely (manual edits only), so this is cached across
-// requests for 5 minutes instead of hitting Supabase on every /transactions
-// and /review page load. A manual category rename/addition can take up to
-// 5 minutes to show up in the picker as a result.
-export const getAssignableCategories = unstable_cache(fetchAssignableCategories, ["assignable-categories"], {
-  revalidate: 300,
-});
+// Read live, deliberately uncached. This was previously wrapped in a
+// 5-minute unstable_cache, which meant a category added or renamed in
+// /categories could take up to 5 minutes to appear in the picker - and, worse,
+// that the picker and the categories screen could disagree about what exists
+// while the two caches drifted. Correctness beats saving one small indexed
+// query per page load, and a stale picker is exactly the kind of bug that
+// looks like nothing is wrong.
+export async function getAssignableCategories(): Promise<CategoryOption[]> {
+  return fetchAssignableCategories();
+}
 
 // Returns category name=null when Gemma's response doesn't cleanly match one
 // of the current category names, so callers can flag it for review instead

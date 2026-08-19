@@ -6,6 +6,7 @@ const LINKS = [
   { href: "/review", label: "Review" },
   { href: "/classifier-gaps", label: "Classifier Gaps" },
   { href: "/cleanup", label: "Cleanup" },
+  { href: "/categories", label: "Categories" },
   { href: "/settings", label: "Settings" },
 ];
 
