@@ -16,12 +16,21 @@ import { categorizeTransaction } from "@/lib/categorize";
 // So the work one invocation takes on is now bounded twice - by row count and
 // by a wall-clock deadline - and whichever trips first, the response says
 // where to resume.
-export const maxDuration = 60;
+// The platform allows 300s here, and the route needs all of it as headroom.
+// An earlier attempt at this fix set 60 - which capped the function *below*
+// the 300s it already had and made the timeouts strictly worse.
+export const maxDuration = 300;
 
-const BATCH_SIZE = 25;
-// Comfortably inside maxDuration, leaving room for the in-flight
-// categorizeTransaction call to finish plus the tail queries below.
-const TIME_BUDGET_MS = 45_000;
+// Small enough that a full batch cannot plausibly approach maxDuration: rows
+// cost ~2.5s each when Gemma is cold, so 10 rows is ~25s typical and ~100s
+// even at 10s/row.
+const BATCH_SIZE = 10;
+// Safety net for pathological slowness, not the primary bound - BATCH_SIZE is.
+// The deadline is only checked between rows, and categorizeTransaction has no
+// timeout of its own, so one slow Gemma call can overrun the budget by however
+// long it takes. Hence the deliberately large gap to maxDuration: enough slack
+// that an in-flight call finishing late still lands inside the limit.
+const TIME_BUDGET_MS = 120_000;
 
 export async function POST(request: NextRequest) {
   // Cursor, not offset. A row can legitimately end this sweep still holding
