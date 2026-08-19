@@ -1,0 +1,19 @@
+name: Capture heartbeat
+
+# Free, Mac-independent heartbeat for transaction capture. Vercel's Hobby plan
+# caps crons at once per day, so this GitHub Actions schedule hits the same
+# endpoint more often (~every 2h) for tighter same-day detection. The endpoint
+# itself decides whether to alert (>8h gap) and throttles duplicate pushes.
+# GitHub may delay scheduled runs by a few minutes, which is fine here.
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit capture-check endpoint
+        run: curl -fsS -m 30 https://sikka-mauve.vercel.app/api/health/capture-check
