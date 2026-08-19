@@ -831,6 +831,17 @@ export function classify(text: string | null | undefined): ClassifyResult {
     "esign document has been successfully signed",
     "we have registered your request for debit card",
     "dispatched: card-", "out for delivery: card-", "delivered: card-",
+    // Credit-card lifecycle notices. The "card-" markers above only cover the
+    // debit-card wording ("Delivered: Card-XXXX"); the credit-card variants
+    // are phrased differently and used to fall through to the needs_review
+    // fallback, cluttering /review with non-transactions. Kept narrow on
+    // purpose - a marker that is too broad would silently swallow a real
+    // transaction whose shape no rule matched yet, which is exactly how
+    // Rs 8,737 of Aug 2026 card spend stayed invisible.
+    "credit card newly issued",
+    "out for delivery: credit card",
+    "delivered! your new credit card",
+    "activate icici bank credit card",
     "thank you for banking with icici bank",
     "we have activated your auto debit facility request",
   ];

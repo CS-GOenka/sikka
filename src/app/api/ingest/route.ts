@@ -180,6 +180,14 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
       amount: classified.amount,
       currency: classified.currency,
       transaction_date: classified.transactionDate,
+      // needs_category_review defaults to true at the DB level as a fail-safe
+      // for a categorization step that fails partway. An "ignored" row has no
+      // such step - categorization only runs for debit/credit, and nothing
+      // downstream clears the flag for anything else - so leaving the default
+      // in place just parks every non-transaction (promos, card-delivery and
+      // activation notices, OTPs) in /review permanently. Recognising a
+      // message as noise and then still asking to categorize it is the bug.
+      ...(classified.type === "ignored" ? { needs_category_review: false } : {}),
     })
     .select("id, type")
     .single();
