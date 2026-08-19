@@ -328,6 +328,28 @@ export function classify(text: string | null | undefined): ClassifyResult {
     });
   }
 
+  // ================= 7b. Credit-card UPI debit ("Credit Card XX debited for ... for UPI-ref-name") =================
+  // Format introduced with the ICICI credit card issued in Aug 2026 (XX7001).
+  // It is a card account being debited over the UPI rail, so it shares the
+  // savings-account UPI shape ("UPI-<ref>-<name>") rather than the older
+  // "Rs X spent using ICICI Bank Card" card-swipe shape in section 7.
+  // The trailing name is bank-truncated (e.g. "EASY SHO", "Mr S JAI"), the
+  // same truncation the cross-rail P2P name matching already tolerates.
+  m = new RegExp(
+    String.raw`ICICI Bank Credit Card\s*${ACCT_RE}\s+debited for\s+${AMOUNT_RE}\s+on\s+${DATE_RE}\s+for\s+UPI-(\d+)-(.+?)\s*\.?\s*(?:To dispute|$)`,
+    "i"
+  ).exec(t);
+  if (m) {
+    const rawPayee = m[5].trim();
+    return result({
+      type: "debit", paymentMethod: "upi", status: "success",
+      accountType: "credit_card", isTransfer: false, cardOrAccount: m[1],
+      payee: cleanPayee(rawPayee), note: rawPayee,
+      amount: parseAmount(m[2]), currency: detectCurrency(t, m.index + m[0].indexOf(m[2])),
+      transactionDate: parseDate(m[3]),
+    });
+  }
+
   // ================= 8. Mandate: future-dated notice (not yet debited) -> ignored/pending =================
   if (/will be debited/i.test(t) && /auto\s*pay|create mandate|mandate/i.test(t)) {
     const mAmt = new RegExp(AMOUNT_RE, "i").exec(t);
