@@ -21,34 +21,15 @@ import {
   type PeriodWindow,
 } from "@/lib/dashboard";
 import type { PeriodKey } from "@/lib/periods";
+import {
+  ROLLUP_COLOR,
+  UNCATEGORISED_COLOR,
+  buildCategoryPalette,
+  type CategoryPalette,
+} from "@/lib/categoryColors";
 import { formatInr } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
 import { TimeBars, bucketReadout } from "@/components/dashboard/TimeBars";
-
-// The donut ramp, darkest first. Colour here encodes MAGNITUDE, not identity:
-// the biggest slice is always the darkest step, so the ring reads as an ordered
-// warm gradient rather than a set of arbitrary hues. Validated as an ordinal
-// ramp (single hue, monotone lightness, adjacent dL >= 0.06, lightest step
-// >= 2:1 against the white card) - see globals.css.
-//
-// The consequence to know about: because the mapping follows rank, changing
-// pill or drill level can repaint a category. That is why every slice is
-// direct-labelled in the list below the chart and identity never rests on
-// colour alone.
-const RAMP = [
-  "var(--sk-c7)",
-  "var(--sk-c6)",
-  "var(--sk-c5)",
-  "var(--sk-c4)",
-  "var(--sk-c3)",
-  "var(--sk-c2)",
-  "var(--sk-c1)",
-];
-
-// Uncategorised is deliberately outside the ramp: it is the absence of a
-// category, not a small one, and a neutral grey keeps it from reading as
-// "the least you spent on".
-const UNCATEGORISED_COLOR = "#9a938b";
 
 // Past this many named slices the ring stops being readable and the tail goes
 // into a rollup - which is then sorted back into place by size like any other
@@ -100,6 +81,9 @@ export function SpendExplorer({
   const [expanded, setExpanded] = useState(false);
 
   const cats = useMemo(() => indexCategories(categories), [categories]);
+  // One shared map, built once: the donut, the bars and the detail list all
+  // read a category's colour from here, so they can never disagree.
+  const palette = useMemo(() => buildCategoryPalette(categories), [categories]);
   const window = periods.find((p) => p.key === period) ?? periods[0];
 
   // Anything that changes what is on screen also invalidates a bar selection
@@ -121,7 +105,20 @@ export function SpendExplorer({
   const total = useMemo(() => sumAmount(scoped), [scoped]);
 
   const { buckets, byPayee } = useMemo(() => breakdown(scoped, path, cats), [scoped, path, cats]);
-  const slices = useMemo(() => buildSlices(buckets, total), [buckets, total]);
+
+  // The category the whole screen is currently scoped to - the deepest crumb
+  // that is a real category. Drives the bar chart's hue and the payee shades.
+  const scopeCategoryId = useMemo(() => {
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (path[i] !== UNCATEGORISED) return Number(path[i]);
+    }
+    return null;
+  }, [path]);
+
+  const slices = useMemo(
+    () => buildSlices(buckets, total, palette, scopeCategoryId, byPayee),
+    [buckets, total, palette, scopeCategoryId, byPayee]
+  );
 
   const crumbs = useMemo(() => scopeLabel(path, cats), [path, cats]);
   const scopeName = crumbs.length > 0 ? crumbs[crumbs.length - 1] : window.label;
@@ -131,9 +128,25 @@ export function SpendExplorer({
   const allTopLevel = useMemo(() => topLevelOptions(rows, cats), [rows, cats]);
 
   const granularity: Granularity = period === "day" ? "hour" : "day";
+  // The comparison series is scoped and filtered exactly like the current one,
+  // so the pair is genuinely like-for-like.
+  const prevScoped = useMemo(() => {
+    if (mode !== "time") return [];
+    const inPrev = rows.filter(
+      (r) =>
+        r.at >= window.prevStartISO &&
+        r.at < window.prevEndISO &&
+        !hidden.has(cats.topKey(r.categoryId))
+    );
+    return scopeRows(inPrev, path, cats);
+  }, [mode, rows, window, hidden, cats, path]);
+
   const bars = useMemo(
-    () => (mode === "time" ? timeBuckets(scoped, window, granularity) : []),
-    [mode, scoped, window, granularity]
+    () =>
+      mode === "time"
+        ? timeBuckets(scoped, prevScoped, window, window.prevStartISO, granularity)
+        : [],
+    [mode, scoped, prevScoped, window, granularity]
   );
   const activeBar = selectedBar !== null && selectedBar < bars.length ? selectedBar : null;
 
@@ -176,7 +189,7 @@ export function SpendExplorer({
                 onClick={() => reset(setPeriod)(pill.key)}
                 className={`min-w-0 flex-1 truncate rounded-full px-2 py-2 text-[0.8125rem] font-medium transition-colors ${
                   active
-                    ? "bg-[var(--sk-accent)] text-white"
+                    ? "bg-[var(--sk-accent)] text-[var(--sk-accent-on)] ring-1 ring-[var(--sk-accent-edge)]"
                     : "text-[var(--sk-ink-3)] active:bg-[var(--sk-plane)]"
                 }`}
               >
@@ -218,6 +231,10 @@ export function SpendExplorer({
             <TimeBars
               buckets={bars}
               granularity={granularity}
+              currentColor={palette.solid(scopeCategoryId)}
+              comparisonColor={palette.muted(scopeCategoryId)}
+              currentLabel={crumbs.length > 0 ? `${scopeName} · ${window.label}` : window.label}
+              comparisonLabel={window.prevLabel}
               selected={activeBar}
               onSelect={setSelectedBar}
             />
@@ -253,7 +270,13 @@ export function SpendExplorer({
  * neutral grey. The named slices are re-sorted *after* folding so the ramp's
  * darkest step always belongs to the biggest slice on screen.
  */
-function buildSlices(buckets: Bucket[], total: number): Slice[] {
+function buildSlices(
+  buckets: Bucket[],
+  total: number,
+  palette: CategoryPalette,
+  scopeCategoryId: number | null,
+  byPayee: boolean
+): Slice[] {
   const named = buckets.filter((b) => b.key !== UNCATEGORISED);
   const uncategorised = buckets.find((b) => b.key === UNCATEGORISED);
 
@@ -270,15 +293,20 @@ function buildSlices(buckets: Bucket[], total: number): Slice[] {
   }
   head.sort((a, b) => b.amount - a.amount);
 
-  // Spread the used steps across the whole ramp rather than crowding the dark
-  // end: with three slices this gives darkest / middle / lightest, which
-  // separates far better than the three darkest browns would.
-  const step = (i: number) =>
-    head.length <= 1 ? RAMP[0] : RAMP[Math.round((i / (head.length - 1)) * (RAMP.length - 1))];
+  // Payee buckets aren't categories, so they have no colour of their own: they
+  // take shades of whichever category the user drilled into, which keeps the
+  // ring reading as one family rather than as a new palette appearing at the
+  // bottom of the path.
+  const payeeShades = byPayee ? palette.shades(scopeCategoryId, head.length) : [];
 
   const slices: Slice[] = head.map((b, i) => ({
     ...b,
-    color: step(i),
+    color:
+      b.key === ROLLUP
+        ? ROLLUP_COLOR
+        : byPayee
+          ? payeeShades[i]
+          : palette.color(Number(b.key)),
     share: total > 0 ? (b.amount / total) * 100 : 0,
   }));
   if (uncategorised && uncategorised.amount > 0) {
@@ -389,7 +417,9 @@ function ToggleButton({
       aria-label={label}
       title={label}
       className={`flex size-8 items-center justify-center rounded-full transition-colors ${
-        active ? "bg-[var(--sk-accent)] text-white" : "text-[var(--sk-ink-3)]"
+        active
+          ? "bg-[var(--sk-accent)] text-[var(--sk-accent-on)] ring-1 ring-[var(--sk-accent-edge)]"
+          : "text-[var(--sk-ink-3)]"
       }`}
     >
       <svg viewBox="0 0 16 16" aria-hidden className="size-4">
@@ -446,7 +476,7 @@ function FilterControl({
         onClick={() => setOpen((v) => !v)}
         className={`flex size-10 items-center justify-center rounded-full border transition-colors ${
           active
-            ? "border-[var(--sk-accent)] bg-[var(--sk-accent-tint)] text-[var(--sk-accent-ink)]"
+            ? "border-[var(--sk-accent-edge)] bg-[var(--sk-accent-tint)] text-[var(--sk-accent-ink)]"
             : "border-[var(--sk-hair)] bg-[var(--sk-surface)] text-[var(--sk-ink-3)]"
         }`}
       >
@@ -457,7 +487,7 @@ function FilterControl({
       {active && (
         <span
           aria-hidden
-          className="pointer-events-none absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-[var(--sk-accent)] text-[0.5625rem] font-bold text-white"
+          className="pointer-events-none absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-[var(--sk-accent)] text-[0.5625rem] font-bold text-[var(--sk-accent-on)] ring-1 ring-[var(--sk-accent-edge)]"
         >
           {hidden.size}
         </span>
@@ -491,7 +521,7 @@ function FilterControl({
                 type="checkbox"
                 checked={!hidden.has(b.key)}
                 onChange={() => toggle(b.key)}
-                className="size-4 accent-[var(--sk-accent)]"
+                className="size-4 accent-[var(--sk-accent-ink)]"
               />
               <span className="truncate">{b.name}</span>
             </label>
@@ -681,7 +711,7 @@ function DetailPanel({
   // swatch says "this is part of that slice", which is true.
   const colorOf = useMemo(() => {
     const exact = new Map(slices.map((s) => [s.key, s.color]));
-    const rollup = exact.get(ROLLUP) ?? RAMP[RAMP.length - 1];
+    const rollup = exact.get(ROLLUP) ?? ROLLUP_COLOR;
     return (key: string) => exact.get(key) ?? rollup;
   }, [slices]);
 

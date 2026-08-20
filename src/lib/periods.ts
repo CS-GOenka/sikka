@@ -24,6 +24,8 @@ export interface PeriodComparison {
   label: string;
   /** Short caption under the % chip - must survive a third of a phone screen. */
   comparisonLabel: string;
+  /** Standalone name for the comparison period, for a chart legend. */
+  comparisonName: string;
   /** The full rule, for the card's title/aria text where there is room for it. */
   comparisonDetail: string;
   current: Window;
@@ -91,6 +93,7 @@ export function periodComparisons(resetHour: number, nowMs: number = Date.now())
       key: "day",
       label: "Today",
       comparisonLabel: "vs yesterday",
+      comparisonName: "Yesterday",
       comparisonDetail: "Today so far, against the whole of yesterday",
       current: today,
       previous: { startISO: iso(todayStartMs - DAY_MS), endISO: today.startISO },
@@ -99,6 +102,7 @@ export function periodComparisons(resetHour: number, nowMs: number = Date.now())
       key: "week",
       label: "This week",
       comparisonLabel: "vs last week",
+      comparisonName: "Last week",
       comparisonDetail: "Monday to now, against the same days of last week",
       current: { startISO: iso(wStart), endISO: iso(nowMs) },
       previous: { startISO: iso(prevWeekStart), endISO: iso(prevWeekStart + weekElapsed) },
@@ -107,6 +111,7 @@ export function periodComparisons(resetHour: number, nowMs: number = Date.now())
       key: "month",
       label: "This month",
       comparisonLabel: "vs last month",
+      comparisonName: "Last month",
       comparisonDetail: "The 1st to now, against the same days of last month",
       current: { startISO: iso(mStart), endISO: iso(nowMs) },
       previous: { startISO: iso(prevMonthStart), endISO: iso(prevMonthStart + monthElapsed) },

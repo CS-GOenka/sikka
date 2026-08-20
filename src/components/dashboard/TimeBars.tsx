@@ -7,21 +7,39 @@ import { istDay, istDayNumber, istHour, istHourRange } from "@/lib/formatIst";
 
 // One hue, one axis, thin marks, recessive chrome. The bars answer "when",
 // where the donut answers "on what" - the same scope, a different question.
+//
+// Two series per slot, in the Apple Health convention: the current period is
+// the solid, saturated step of the scope's own category hue; the comparison
+// period is a washed-out step of that same hue. Same hue on purpose - the pair
+// is one category measured twice, and the legend says which is which.
 const TRACK_HEIGHT = 132;
 const MIN_BAR_PX = 2; // a spent hour must never be indistinguishable from an empty one
 
 export function TimeBars({
   buckets,
   granularity,
+  currentColor,
+  comparisonColor,
+  currentLabel,
+  comparisonLabel,
   selected,
   onSelect,
 }: {
   buckets: TimeBucket[];
   granularity: Granularity;
+  currentColor: string;
+  comparisonColor: string;
+  currentLabel: string;
+  comparisonLabel: string;
   selected: number | null;
   onSelect: (index: number | null) => void;
 }) {
-  const max = useMemo(() => buckets.reduce((m, b) => Math.max(m, b.amount), 0), [buckets]);
+  // One scale for both series. Two y-scales would make the comparison bar a
+  // lie - the whole point is that the two heights are directly comparable.
+  const max = useMemo(
+    () => buckets.reduce((m, b) => Math.max(m, b.amount, b.prevAmount), 0),
+    [buckets]
+  );
 
   // Direct-label the peak only. A number on every bar is unreadable at phone
   // width and adds nothing the readout above the chart doesn't already give on
@@ -44,42 +62,51 @@ export function TimeBars({
     );
   }
 
+  const height = (value: number) =>
+    value > 0 ? Math.max((value / max) * TRACK_HEIGHT, MIN_BAR_PX) : 0;
+
   return (
     <div>
-      {/* overflow-visible so a peak label wider than its 12px column can spill
-          over its quiet neighbours instead of becoming an ellipsis. */}
-      <div className="flex items-end gap-px overflow-visible" style={{ height: TRACK_HEIGHT }}>
+      <Legend
+        currentColor={currentColor}
+        comparisonColor={comparisonColor}
+        currentLabel={currentLabel}
+        comparisonLabel={comparisonLabel}
+      />
+
+      {/* overflow-visible so a peak label wider than its column can spill over
+          its quiet neighbours instead of becoming an ellipsis. */}
+      <div className="flex items-end gap-[3px] overflow-visible" style={{ height: TRACK_HEIGHT }}>
         {buckets.map((bucket, i) => {
           const isSelected = selected === i;
-          const height = bucket.amount > 0 ? Math.max((bucket.amount / max) * TRACK_HEIGHT, MIN_BAR_PX) : 0;
+          const dim = selected !== null && !isSelected;
           return (
             <button
               key={bucket.startMs}
               type="button"
-              // The hit target is the whole column, not the bar: at a month's
+              // The hit target is the whole slot, not the bar: at a month's
               // granularity a quiet day is a 2px mark that no thumb could hit.
               onClick={() => onSelect(isSelected ? null : i)}
-              aria-label={`${labelFor(bucket.startMs, granularity)}: ${formatInr(bucket.amount)}`}
+              aria-label={`${labelFor(bucket.startMs, granularity)}: ${formatInr(bucket.amount)}, ${comparisonLabel} ${formatInr(bucket.prevAmount)}`}
               aria-pressed={isSelected}
-              className="group flex h-full min-w-0 flex-1 flex-col justify-end"
+              className="flex h-full min-w-0 flex-1 flex-col justify-end"
+              style={{ opacity: dim ? 0.45 : 1 }}
             >
               {i === peak && (
                 <span className="mb-1 whitespace-nowrap text-center text-[0.625rem] font-semibold tabular-nums text-[var(--sk-ink-2)]">
                   {formatInr(bucket.amount)}
                 </span>
               )}
-              <span
-                style={{ height }}
-                className={`w-full rounded-t-[3px] transition-colors ${
-                  isSelected
-                    ? "bg-[var(--sk-accent-ink)]"
-                    : selected === null
-                      ? "bg-[var(--sk-accent)]"
-                      : // Once something is selected the rest recede, so the
-                        // comparison the user asked for is the thing on screen.
-                        "bg-[var(--sk-c1)]"
-                }`}
-              />
+              <span className="flex w-full items-end justify-center gap-[1px]">
+                <span
+                  className="min-w-0 flex-1 rounded-t-[3px]"
+                  style={{ height: height(bucket.amount), background: currentColor }}
+                />
+                <span
+                  className="min-w-0 flex-1 rounded-t-[3px]"
+                  style={{ height: height(bucket.prevAmount), background: comparisonColor }}
+                />
+              </span>
             </button>
           );
         })}
@@ -87,17 +114,52 @@ export function TimeBars({
 
       <div className="mt-1.5 h-px bg-[var(--sk-hair-strong)]" />
 
-      <div className="mt-1 flex gap-px">
+      <div className="mt-1 flex gap-[3px]">
         {buckets.map((bucket, i) => (
           <span
             key={bucket.startMs}
             className="min-w-0 flex-1 whitespace-nowrap text-center text-[0.625rem] tabular-nums text-[var(--sk-ink-3)]"
           >
-            {ticks.has(i) ? tickLabel(bucket.startMs, granularity) : " "}
+            {ticks.has(i) ? tickLabel(bucket.startMs, granularity) : " "}
           </span>
         ))}
       </div>
     </div>
+  );
+}
+
+// Two series means a legend is not optional: the solid/washed distinction is a
+// colour difference, and a colour difference on its own is not a label.
+function Legend({
+  currentColor,
+  comparisonColor,
+  currentLabel,
+  comparisonLabel,
+}: {
+  currentColor: string;
+  comparisonColor: string;
+  currentLabel: string;
+  comparisonLabel: string;
+}) {
+  return (
+    <ul className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+      <LegendItem color={currentColor} label={currentLabel} />
+      <LegendItem color={comparisonColor} label={comparisonLabel} />
+    </ul>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <li className="flex min-w-0 items-center gap-1.5">
+      <span
+        aria-hidden
+        className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+        style={{ background: color }}
+      />
+      {/* Text ink, never the series colour - the swatch beside it carries identity. */}
+      <span className="truncate text-[0.75rem] text-[var(--sk-ink-2)]">{label}</span>
+    </li>
   );
 }
 

@@ -20,24 +20,18 @@
   --sk-hair: #ede9e3;
   --sk-hair-strong: #e0dad1;
 
-  /* The one warm accent. This is step 4 of the categorical ramp below, so the
-     accent and the chart are literally the same hue at different lightness. */
-  --sk-accent: #bd5b00;       /* white text on it: 4.51:1 */
-  --sk-accent-tint: #fdf3e9;
-  --sk-accent-ink: #8a4613;
-
-  /* Donut ramp: single hue (OKLCH h=52), monotone lightness, validated as an
-     ordinal ramp against a #ffffff surface - every adjacent step clears
-     dL 0.06 and the lightest step clears 2:1 vs the card. Darker = larger
-     share, so colour carries magnitude here, not identity; the detail list
-     below the chart direct-labels every slice so nothing rests on colour. */
-  --sk-c1: #eba376;
-  --sk-c2: #e1884f;
-  --sk-c3: #d26f27;
-  --sk-c4: #bd5b00;
-  --sk-c5: #a14c00;
-  --sk-c6: #853f01;
-  --sk-c7: #6a3205;
+  /* The one warm accent: a Blinkit-style yellow, used the way Blinkit uses it
+     - as a FILL with dark ink on top (11.3:1), never as text or a hairline.
+     Against white the yellow itself is only 1.5:1, so every filled element
+     also carries --sk-accent-edge: without that ring the pill has a readable
+     label but no readable shape. */
+  --sk-accent: #f8cb46;
+  --sk-accent-edge: #e0ac1c;   /* defines the fill's outline against the card */
+  --sk-accent-on: #1c1917;     /* the ink that sits on the fill - 11.34:1 */
+  --sk-accent-tint: #fef7e2;   /* the wash behind an active-but-not-filled control */
+  /* Yellow cannot carry text on a light page, so anything that would have been
+     "accent-coloured text" wears this deep amber instead - 5.65:1 on white. */
+  --sk-accent-ink: #8a5f00;
 
   /* Status. Reserved: never used for a chart series. Each ships with an arrow
      or a word, never colour alone. */

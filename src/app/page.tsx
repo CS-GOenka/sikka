@@ -91,6 +91,9 @@ async function renderDashboard() {
     label: p.label,
     startISO: p.current.startISO,
     endISO: p.current.endISO,
+    prevStartISO: p.previous.startISO,
+    prevEndISO: p.previous.endISO,
+    prevLabel: p.comparisonName,
   }));
 
   return (

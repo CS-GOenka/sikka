@@ -36,6 +36,11 @@ export interface PeriodWindow {
   label: string;
   startISO: string;
   endISO: string;
+  /** Start of the comparison period, for the bar chart's second series. */
+  prevStartISO: string;
+  prevEndISO: string;
+  /** Legend label for the comparison series, e.g. "Yesterday". */
+  prevLabel: string;
 }
 
 export interface Bucket {
@@ -215,6 +220,8 @@ export type Granularity = "hour" | "day";
 export interface TimeBucket {
   startMs: number;
   amount: number;
+  /** The same slot one period earlier - hour 14 yesterday, last Monday, the 5th of last month. */
+  prevAmount: number;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -231,7 +238,9 @@ const DAY_MS = 24 * HOUR_MS;
  */
 export function timeBuckets(
   rows: DashRow[],
+  prevRows: DashRow[],
   window: { startISO: string; endISO: string },
+  prevStartISO: string,
   granularity: Granularity,
   nowMs: number = Date.now()
 ): TimeBucket[] {
@@ -239,12 +248,23 @@ export function timeBuckets(
   const startMs = Date.parse(window.startISO);
   const lastMs = Math.min(nowMs, Date.parse(window.endISO) - 1);
   const count = Math.max(1, Math.floor((lastMs - startMs) / step) + 1);
+  const prevStartMs = Date.parse(prevStartISO);
 
   const buckets: TimeBucket[] = [];
-  for (let i = 0; i < count; i++) buckets.push({ startMs: startMs + i * step, amount: 0 });
+  for (let i = 0; i < count; i++) {
+    buckets.push({ startMs: startMs + i * step, amount: 0, prevAmount: 0 });
+  }
   for (const row of rows) {
     const i = Math.floor((Date.parse(row.at) - startMs) / step);
     if (i >= 0 && i < count) buckets[i].amount += row.amount;
+  }
+  // The comparison series is bucketed off the PREVIOUS period's own start, so
+  // index i means the same slot in both: hour 14 of each day, Monday of each
+  // week, the 5th of each month. Pairing by wall-clock instant instead would
+  // line this Monday up against last Tuesday.
+  for (const row of prevRows) {
+    const i = Math.floor((Date.parse(row.at) - prevStartMs) / step);
+    if (i >= 0 && i < count) buckets[i].prevAmount += row.amount;
   }
   return buckets;
 }
