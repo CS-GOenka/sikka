@@ -34,6 +34,7 @@ import { PeriodStepper } from "@/components/dashboard/PeriodStepper";
 import { formatInr } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
 import { TimeBars, bucketReadout } from "@/components/dashboard/TimeBars";
+import { TransactionSheet } from "@/components/dashboard/TransactionSheet";
 
 // Past this many named slices the ring stops being readable and the tail goes
 // into a rollup - which is then sorted back into place by size like any other
@@ -88,6 +89,7 @@ export function SpendExplorer({
   // one tap made it far too easy to fall a level deeper than intended, with
   // nothing in between that just answers "how much was that one?".
   const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
+  const [openTransaction, setOpenTransaction] = useState<DashRow | null>(null);
 
   const cats = useMemo(() => indexCategories(categories), [categories]);
   // One shared map, built once: the donut, the bars and the detail list all
@@ -331,7 +333,20 @@ export function SpendExplorer({
         expanded={expanded}
         onExpand={() => setExpanded(true)}
         onDrill={drillTo}
+        onOpenTransaction={setOpenTransaction}
       />
+
+      {openTransaction && (
+        <TransactionSheet
+          row={openTransaction}
+          categoryName={
+            openTransaction.categoryId == null
+              ? UNCATEGORISED_LABEL
+              : cats.name(openTransaction.categoryId)
+          }
+          onClose={() => setOpenTransaction(null)}
+        />
+      )}
     </section>
   );
 }
@@ -792,6 +807,7 @@ function DetailPanel({
   expanded,
   onExpand,
   onDrill,
+  onOpenTransaction,
 }: {
   slices: Slice[];
   buckets: Bucket[];
@@ -802,6 +818,7 @@ function DetailPanel({
   expanded: boolean;
   onExpand: () => void;
   onDrill: (key: string) => void;
+  onOpenTransaction: (row: DashRow) => void;
 }) {
   // A bucket that was folded into the rollup wears the rollup's colour: the
   // swatch says "this is part of that slice", which is true.
@@ -838,30 +855,41 @@ function DetailPanel({
           <ul className="mt-3 flex flex-col">
             {showTransactions
               ? transactions.slice(0, shown).map((row) => (
-                  <li
-                    key={row.id}
-                    className="flex items-center gap-2.5 border-b border-[var(--sk-hair)] py-2.5 last:border-b-0"
-                  >
-                    <span
-                      aria-hidden
-                      // Keyed to the payee's slice, so the ring above and the
-                      // rows below are readable as one thing: at this depth the
-                      // chart's segments are payees, and without this the
-                      // slices would have no label anywhere in text.
-                      className="size-2.5 shrink-0 rounded-full"
-                      style={{ background: colorOf(row.payee?.trim() || "Unknown payee") }}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-[var(--sk-ink)]">
-                        {row.payee?.trim() || "Unknown payee"}
+                  <li key={row.id} className="border-b border-[var(--sk-hair)] last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => onOpenTransaction(row)}
+                      className="flex w-full items-center gap-2.5 py-2.5 text-left active:bg-[var(--sk-plane)]"
+                    >
+                      <span
+                        aria-hidden
+                        // Keyed to the payee's slice, so the ring above and the
+                        // rows below are readable as one thing: at this depth the
+                        // chart's segments are payees, and without this the
+                        // slices would have no label anywhere in text.
+                        className="size-2.5 shrink-0 rounded-full"
+                        style={{ background: colorOf(row.payee?.trim() || "Unknown payee") }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-[var(--sk-ink)]">
+                          {row.payee?.trim() || "Unknown payee"}
+                        </span>
+                        <span className="block text-xs tabular-nums text-[var(--sk-ink-3)]">
+                          {istDateTime(Date.parse(row.at))}
+                        </span>
                       </span>
-                      <span className="block text-xs tabular-nums text-[var(--sk-ink-3)]">
-                        {istDateTime(Date.parse(row.at))}
+                      {row.starred && (
+                        <span aria-label="Flagged for review" className="shrink-0 text-[var(--sk-accent-ink)]">
+                          ★
+                        </span>
+                      )}
+                      <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--sk-ink)]">
+                        {formatInr(row.amount)}
                       </span>
-                    </span>
-                    <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--sk-ink)]">
-                      {formatInr(row.amount)}
-                    </span>
+                      <span aria-hidden className="shrink-0 text-[var(--sk-ink-3)]">
+                        ›
+                      </span>
+                    </button>
                   </li>
                 ))
               : buckets.slice(0, shown).map((bucket) => (

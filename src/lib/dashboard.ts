@@ -22,6 +22,12 @@ export interface DashRow {
   /** phone_received_at, canonical UTC ISO-8601 - sortable and comparable as text. */
   at: string;
   categoryId: number | null;
+  paymentMethod: string | null;
+  accountType: string | null;
+  cardOrAccount: string | null;
+  transactionDate: string | null;
+  note: string | null;
+  starred: boolean;
 }
 
 export interface CategoryNode {
@@ -173,8 +179,15 @@ export function breakdown(
     ), byPayee: false };
   }
   if (path.length === 1) {
-    const distinct = new Set(scoped.map((r) => String(r.categoryId)));
-    if (distinct.size > 1) {
+    // Group by subcategory even when there is only ONE of them: Personal Care
+    // holding nothing but Salon should still show Salon as a step, because
+    // that is the level the user is walking down. The only case with nothing
+    // to show is a category whose rows all sit on the category itself - there
+    // the single bucket would just be the scope repeated back.
+    const scopeId = path[0] === UNCATEGORISED ? null : Number(path[0]);
+    const distinct = new Set(scoped.map((r) => r.categoryId));
+    const onlyItself = distinct.size <= 1 && distinct.has(scopeId);
+    if (!onlyItself) {
       return {
         buckets: group(scoped, (r) => String(r.categoryId), (key) => cats.name(Number(key))),
         byPayee: false,

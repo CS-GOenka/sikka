@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { setTransactionStarred } from "@/lib/starTransaction";
 
 // Starring surfaces a transaction on /review immediately - no separate
 // step, since /review's query includes starred=true directly.
@@ -12,15 +13,7 @@ export function StarToggle({ transactionId, starred }: { transactionId: number; 
   async function handleClick() {
     setPending(true);
     try {
-      const res = await fetch("/api/star", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactionId, starred: !starred }),
-      });
-      const json = await res.json();
-      if (!res.ok || json.status !== "OK") {
-        throw new Error(json.error ?? "Failed to update star");
-      }
+      await setTransactionStarred(transactionId, !starred);
       router.refresh();
     } catch (err) {
       console.error("Failed to toggle star:", err);

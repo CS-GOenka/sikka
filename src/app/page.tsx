@@ -84,6 +84,12 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
       payee: r.payee,
       at: r.receivedAt,
       categoryId: r.categoryId,
+      paymentMethod: r.paymentMethod,
+      accountType: r.accountType,
+      cardOrAccount: r.cardOrAccount,
+      transactionDate: r.transactionDate,
+      note: r.note,
+      starred: r.starred,
     }));
 
   const cards: ComparisonCard[] = periods.map((p) => {

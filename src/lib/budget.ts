@@ -66,12 +66,24 @@ export interface SpendRow {
   categoryName: string | null;
   parentId: number | null;
   receivedAt: string | null;
+  paymentMethod: string | null;
+  accountType: string | null;
+  cardOrAccount: string | null;
+  transactionDate: string | null;
+  note: string | null;
+  starred: boolean;
 }
 
 interface SpendQueryRow {
   id: number;
   amount: number | null;
   payee: string | null;
+  payment_method: string | null;
+  account_type: string | null;
+  card_or_account: string | null;
+  transaction_date: string | null;
+  note: string | null;
+  starred: boolean | null;
   category_id: number | null;
   categories: { counts_as_spend: boolean; name: string; parent_id: number | null } | null;
   raw_messages: { phone_received_at: string | null } | null;
@@ -98,7 +110,7 @@ export async function fetchQualifyingSpendRows(window: {
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, amount, payee, category_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
+      "id, amount, payee, payment_method, account_type, card_or_account, transaction_date, note, starred, category_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
     )
     .eq("type", "debit")
     .eq("status", "success")
@@ -121,6 +133,12 @@ export async function fetchQualifyingSpendRows(window: {
       categoryName: row.categories?.name ?? null,
       parentId: row.categories?.parent_id ?? null,
       receivedAt: row.raw_messages?.phone_received_at ?? null,
+      paymentMethod: row.payment_method,
+      accountType: row.account_type,
+      cardOrAccount: row.card_or_account,
+      transactionDate: row.transaction_date,
+      note: row.note,
+      starred: row.starred === true,
     });
   }
   return rows;
