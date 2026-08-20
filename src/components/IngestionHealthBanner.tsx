@@ -12,6 +12,11 @@ export function IngestionHealthBanner() {
     ageMinutes: number | null;
     captureStale: boolean;
     captureAgeHours: number | null;
+    phoneArmed: boolean;
+    phoneStale: boolean;
+    phoneAgeMinutes: number | null;
+    monitorStale: boolean;
+    monitorAgeMinutes: number | null;
   } | null>(null);
 
   useEffect(() => {
@@ -27,6 +32,16 @@ export function IngestionHealthBanner() {
             ageMinutes: typeof j.ageMinutes === "number" ? j.ageMinutes : null,
             captureStale: !!j.captureStale,
             captureAgeHours: typeof j.captureAgeHours === "number" ? j.captureAgeHours : null,
+            // Optional-chained throughout: an older deployment (or a
+            // pre-migration database) simply omits these, and the banner must
+            // degrade to its previous behaviour rather than crash.
+            phoneArmed: j.phoneHeartbeat?.armed !== false,
+            phoneStale: !!j.phoneHeartbeat?.stale,
+            phoneAgeMinutes:
+              typeof j.phoneHeartbeat?.ageMinutes === "number" ? j.phoneHeartbeat.ageMinutes : null,
+            monitorStale: !!j.monitor?.stale,
+            monitorAgeMinutes:
+              typeof j.monitor?.ageMinutes === "number" ? j.monitor.ageMinutes : null,
           });
         })
         .catch(() => {});
@@ -41,23 +56,52 @@ export function IngestionHealthBanner() {
     };
   }, []);
 
-  if (!health || (!health.stale && !health.captureStale)) return null;
+  const anything =
+    health &&
+    (health.stale ||
+      health.captureStale ||
+      health.phoneStale ||
+      health.monitorStale ||
+      !health.phoneArmed);
+  if (!anything) return null;
 
-  // Capture staleness (nothing ingested) is the more serious signal - it means
-  // transactions are actually being missed - so it takes precedence.
+  const mins = (m: number | null, fallback: string) =>
+    m == null ? fallback : m >= 120 ? `${Math.floor(m / 60)}h` : `${m}m`;
+
+  // Ordered by how much each finding invalidates the others.
+  //
+  // The monitor comes first: it is what raises every other alert, so while it
+  // is down none of the warnings below can be trusted to reach you - a silent
+  // app would look identical to a healthy one. Then capture staleness (money
+  // actually being missed), then the phone, then the Mac.
   let message: string;
-  if (health.captureStale) {
-    const h = health.captureAgeHours == null ? "8h+" : `${Math.floor(health.captureAgeHours)}h`;
+  let tone = "bg-red-600";
+  if (health!.monitorStale) {
+    message = `⚠️ Monitoring itself hasn't run in ${mins(
+      health!.monitorAgeMinutes,
+      "a while"
+    )} — outage alerts may not reach you.`;
+  } else if (health!.captureStale) {
+    const h = health!.captureAgeHours == null ? "8h+" : `${Math.floor(health!.captureAgeHours)}h`;
     message = `⚠️ No transactions captured in ${h} — the SMS pipeline may be down.`;
+  } else if (health!.phoneStale) {
+    message = `⚠️ No check-in from your phone automations in ${mins(
+      health!.phoneAgeMinutes,
+      "a while"
+    )} — the SMS-capture Shortcut may have stopped.`;
+  } else if (health!.stale) {
+    message = `⚠️ Ingestion may be down — the reconcile last checked in ${mins(
+      health!.ageMinutes,
+      "a while"
+    )} ago.`;
   } else {
-    const age =
-      health.ageMinutes == null
-        ? "a while"
-        : health.ageMinutes >= 120
-          ? `${Math.floor(health.ageMinutes / 60)}h`
-          : `${health.ageMinutes}m`;
-    message = `⚠️ Ingestion may be down — the reconcile last checked in ${age} ago.`;
+    // Not armed. Amber rather than red: nothing is broken, but the phone
+    // monitor cannot fire yet, and saying so is the whole point - an unarmed
+    // monitor is otherwise indistinguishable from a healthy one.
+    message =
+      "⚠️ Phone-heartbeat monitoring is not armed — no check-in received yet, so a missing-ping alert cannot fire.";
+    tone = "bg-amber-600";
   }
 
-  return <div className="bg-red-600 px-4 py-2 text-center text-sm font-medium text-white">{message}</div>;
+  return <div className={`${tone} px-4 py-2 text-center text-sm font-medium text-white`}>{message}</div>;
 }

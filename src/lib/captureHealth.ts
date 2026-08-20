@@ -28,8 +28,13 @@ const ALERT_THROTTLE_HOURS = 6;
 // alert (age passes 60 just after the second miss); one late or dropped ping
 // stays quiet. The single source of truth for this threshold - nothing else,
 // display or check, carries its own copy.
-const PHONE_HEARTBEAT_GAP_MINUTES = 60;
+export const PHONE_HEARTBEAT_GAP_MINUTES = 60;
 const PHONE_ALERT_THROTTLE_HOURS = 6;
+
+// The scheduler (cron-job.org) calls this every 30 minutes, so three missed
+// runs is a real outage rather than one late invocation. Exported for the
+// in-app banner, which must not carry its own copy of this number.
+export const CAPTURE_CHECK_STALE_MINUTES = 95;
 
 export interface CaptureHealthResult {
   status: "OK" | "ERROR";
@@ -45,6 +50,20 @@ export interface CaptureHealthResult {
 export async function runCaptureHealthChecks(): Promise<CaptureHealthResult> {
   // Both checks read settings; fetch once.
   const { data: settingsRow } = await supabase.from("settings").select("*").eq("id", 1).maybeSingle();
+
+  // Record the invocation before doing any work, so this says "the scheduler
+  // reached us" rather than "the checks succeeded". Those are different
+  // failures and conflating them is what made a missed alert hard to diagnose:
+  // previously the only evidence a run had happened at all was the side effect
+  // of an alert that fired, so a quiet period was indistinguishable from a
+  // dead cron. Best-effort - a failure here must never block the checks.
+  const { error: markError } = await supabase
+    .from("settings")
+    .upsert({ id: 1, last_capture_check_at: new Date().toISOString() }, { onConflict: "id" });
+  if (markError) {
+    console.error("Failed to record capture-check invocation:", markError);
+  }
+
   const phone = await checkPhoneHeartbeat(settingsRow);
 
   const { data, error } = await supabase
