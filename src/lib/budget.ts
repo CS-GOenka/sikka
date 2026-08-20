@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { sendPushToAll } from "@/lib/push";
+import { formatInr as formatInrBase } from "@/lib/formatInr";
 
 // The account holder and all transaction data are in IST (UTC+5:30, no DST),
 // so budget days are anchored to IST regardless of where the server runs.
@@ -53,10 +54,23 @@ export function budgetDayWindowUtc(
   };
 }
 
-interface QualifyingRow {
+// A qualifying debit, with enough category context for the dashboard to roll
+// subcategories up into their parent. The dashboard needs the individual rows,
+// not just a sum, so the fetch lives here - one definition of "qualifying
+// spend" that both the budget total and the breakdown read from.
+export interface SpendRow {
+  amount: number;
+  categoryId: number | null;
+  categoryName: string | null;
+  parentId: number | null;
+  receivedAt: string | null;
+}
+
+interface SpendQueryRow {
   amount: number | null;
   category_id: number | null;
-  categories: { counts_as_spend: boolean } | null;
+  categories: { counts_as_spend: boolean; name: string; parent_id: number | null } | null;
+  raw_messages: { phone_received_at: string | null } | null;
 }
 
 function countsAsSpend(row: { category_id: number | null; categories: { counts_as_spend: boolean } | null }): boolean {
@@ -65,7 +79,7 @@ function countsAsSpend(row: { category_id: number | null; categories: { counts_a
   return row.category_id == null || row.categories?.counts_as_spend === true;
 }
 
-// Sum of qualifying spend within the given window. Qualifying = a successful,
+// The qualifying spend rows within the given window. Qualifying = a successful,
 // non-transfer INR debit whose category counts as spend (or which has no
 // category yet). The day boundary is anchored on raw_messages.phone_received_at
 // (when the SMS was actually received on the phone ~ when the spend happened),
@@ -73,29 +87,52 @@ function countsAsSpend(row: { category_id: number | null; categories: { counts_a
 // created_at is deliberately NOT used - it reflects when a row was inserted,
 // which is wrong for backfilled/reconciled data. The !inner join makes the
 // phone_received_at range filter restrict the transactions, not just the embed.
-export async function computeTodaySpend(window: { startISO: string; endISO: string }): Promise<number> {
+export async function fetchQualifyingSpendRows(window: {
+  startISO: string;
+  endISO: string;
+}): Promise<SpendRow[]> {
   const { data, error } = await supabase
     .from("transactions")
-    .select("amount, category_id, categories(counts_as_spend), raw_messages!inner(phone_received_at)")
+    .select(
+      "amount, category_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
+    )
     .eq("type", "debit")
     .eq("status", "success")
     .eq("is_transfer", false)
     .eq("currency", "INR")
     .gte("raw_messages.phone_received_at", window.startISO)
     .lt("raw_messages.phone_received_at", window.endISO)
-    .returns<QualifyingRow[]>();
+    .returns<SpendQueryRow[]>();
   if (error) {
     throw new Error(`Failed to compute today's spend: ${error.message}`);
   }
-  let total = 0;
+  const rows: SpendRow[] = [];
   for (const row of data ?? []) {
-    if (typeof row.amount === "number" && countsAsSpend(row)) total += row.amount;
+    if (typeof row.amount !== "number" || !countsAsSpend(row)) continue;
+    rows.push({
+      amount: row.amount,
+      categoryId: row.category_id,
+      categoryName: row.categories?.name ?? null,
+      parentId: row.categories?.parent_id ?? null,
+      receivedAt: row.raw_messages?.phone_received_at ?? null,
+    });
   }
+  return rows;
+}
+
+export function sumSpendRows(rows: SpendRow[]): number {
+  let total = 0;
+  for (const row of rows) total += row.amount;
   return total;
 }
 
+export async function computeTodaySpend(window: { startISO: string; endISO: string }): Promise<number> {
+  return sumSpendRows(await fetchQualifyingSpendRows(window));
+}
+
+// Push copy quotes a specific transaction, so it keeps paise.
 function formatInr(n: number): string {
-  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  return formatInrBase(n, 2);
 }
 
 interface NotifyRow {

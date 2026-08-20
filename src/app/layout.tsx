@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { RegisterServiceWorker } from "./register-sw";
-import { Nav } from "@/components/Nav";
+import { ProfileMenu } from "@/components/ProfileMenu";
 import { IngestionHealthBanner } from "@/components/IngestionHealthBanner";
 
 const geistSans = Geist({
@@ -34,7 +34,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#000000",
+  // Matches the app plane, so the iOS/Android chrome blends into the page
+  // instead of framing it in black.
+  themeColor: "#fbf9f6",
 };
 
 export default function RootLayout({
@@ -50,7 +52,13 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <RegisterServiceWorker />
         <IngestionHealthBanner />
-        <Nav />
+        {/* The profile button replaces the old tab bar: every other screen is
+            reached from the menu it opens, leaving the dashboard as the
+            default view. It lives in the layout so it is present on those
+            screens too, not just here. */}
+        <header className="flex justify-end px-4 pt-4">
+          <ProfileMenu />
+        </header>
         {children}
       </body>
     </html>

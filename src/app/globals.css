@@ -1,26 +1,59 @@
 @import "tailwindcss";
 
+/* Sikka is a light-only app. Tailwind v4's `dark:` variant defaults to
+   prefers-color-scheme, which would let the OS repaint screens that were never
+   designed for a dark surface. Rebinding the variant to a `.dark` class we
+   never set neutralises every existing `dark:` utility in one place, so the
+   older screens stay legible without editing each of them. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  color-scheme: light;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Surfaces & ink. Warm neutrals - the greys are tinted toward the accent's
+     hue so white cards on the plane read as "warm paper", not "grey UI". */
+  --sk-plane: #fbf9f6;
+  --sk-surface: #ffffff;
+  --sk-ink: #1c1917;      /* 16.6:1 on plane */
+  --sk-ink-2: #57534e;    /*  7.3:1 on plane */
+  --sk-ink-3: #79746e;    /*  4.6:1 on surface - lightest ink still safe for text */
+  --sk-hair: #ede9e3;
+  --sk-hair-strong: #e0dad1;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* The one warm accent. This is step 4 of the categorical ramp below, so the
+     accent and the chart are literally the same hue at different lightness. */
+  --sk-accent: #bd5b00;       /* white text on it: 4.51:1 */
+  --sk-accent-tint: #fdf3e9;
+  --sk-accent-ink: #8a4613;
+
+  /* Donut ramp: single hue (OKLCH h=52), monotone lightness, validated as an
+     ordinal ramp against a #ffffff surface - every adjacent step clears
+     dL 0.06 and the lightest step clears 2:1 vs the card. Darker = larger
+     share, so colour carries magnitude here, not identity; the detail list
+     below the chart direct-labels every slice so nothing rests on colour. */
+  --sk-c1: #eba376;
+  --sk-c2: #e1884f;
+  --sk-c3: #d26f27;
+  --sk-c4: #bd5b00;
+  --sk-c5: #a14c00;
+  --sk-c6: #853f01;
+  --sk-c7: #6a3205;
+
+  /* Status. Reserved: never used for a chart series. Each ships with an arrow
+     or a word, never colour alone. */
+  --sk-bad: #b42318;      /* 6.6:1 on surface - spending MORE */
+  --sk-bad-tint: #fdf2f0;
+  --sk-good: #0e7a3d;     /* 5.4:1 on surface - spending LESS */
+  --sk-good-tint: #f1f8f3;
+  --sk-warn: #8a6100;     /* 5.5:1 on surface - exactly flat */
+  --sk-warn-tint: #fdf6e7;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--sk-plane);
+  color: var(--sk-ink);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* iOS Safari otherwise inflates text in the rotated/zoomed states this app
+     is read in one-handed. */
+  -webkit-text-size-adjust: 100%;
 }
