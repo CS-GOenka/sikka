@@ -228,10 +228,26 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
 /**
- * Even buckets from the window's start up to and including the one `nowMs`
- * falls in. Buckets that have not happened yet are left off rather than drawn
- * empty - an hour that has not arrived is not an hour of zero spend, and a
- * month chart padded to the 31st reads as a collapse in spending.
+ * Even buckets tiling BOTH the current window and the comparison window, taken
+ * straight from the period windows the comparison cards were built from.
+ *
+ * Two rules this must not break, both of which it previously did:
+ *
+ * 1. No qualifying row may be dropped. The bucket count is derived from the
+ *    window spans, so every row inside a window necessarily lands in a bucket
+ *    and the bars always sum to the total the pie and the card show. The old
+ *    version derived the count from the BROWSER's Date.now(), which is not the
+ *    clock the windows were computed on - anything past that instant (a phone
+ *    whose clock runs fast, a tab left open) fell outside the range and was
+ *    silently discarded from the bars while still counting in the total.
+ *
+ * 2. The comparison series must mean what the card means. The count now covers
+ *    the longer of the two windows rather than truncating the comparison to the
+ *    current period's elapsed length. For the week and month that changes
+ *    nothing - their comparison windows are already elapsed-matched. For the
+ *    day it is the whole difference between "yesterday" being the ₹17,687 the
+ *    card reports and being only the couple of hours of it that today has
+ *    reached so far.
  *
  * Day buckets step from the window start, which is the budget-day reset hour,
  * so a bar is one budget day - the same day the cards and the pills mean.
@@ -240,31 +256,30 @@ export function timeBuckets(
   rows: DashRow[],
   prevRows: DashRow[],
   window: { startISO: string; endISO: string },
-  prevStartISO: string,
-  granularity: Granularity,
-  nowMs: number = Date.now()
+  prevWindow: { startISO: string; endISO: string },
+  granularity: Granularity
 ): TimeBucket[] {
   const step = granularity === "hour" ? HOUR_MS : DAY_MS;
   const startMs = Date.parse(window.startISO);
-  const lastMs = Math.min(nowMs, Date.parse(window.endISO) - 1);
-  const count = Math.max(1, Math.floor((lastMs - startMs) / step) + 1);
-  const prevStartMs = Date.parse(prevStartISO);
+  const prevStartMs = Date.parse(prevWindow.startISO);
+
+  const spanBuckets = (w: { startISO: string; endISO: string }) =>
+    Math.max(1, Math.ceil((Date.parse(w.endISO) - Date.parse(w.startISO)) / step));
+  const count = Math.max(spanBuckets(window), spanBuckets(prevWindow));
 
   const buckets: TimeBucket[] = [];
   for (let i = 0; i < count; i++) {
     buckets.push({ startMs: startMs + i * step, amount: 0, prevAmount: 0 });
   }
-  for (const row of rows) {
-    const i = Math.floor((Date.parse(row.at) - startMs) / step);
-    if (i >= 0 && i < count) buckets[i].amount += row.amount;
-  }
+  const place = (row: DashRow, origin: number, field: "amount" | "prevAmount") => {
+    const i = Math.floor((Date.parse(row.at) - origin) / step);
+    if (i >= 0 && i < count) buckets[i][field] += row.amount;
+  };
+  for (const row of rows) place(row, startMs, "amount");
   // The comparison series is bucketed off the PREVIOUS period's own start, so
   // index i means the same slot in both: hour 14 of each day, Monday of each
   // week, the 5th of each month. Pairing by wall-clock instant instead would
   // line this Monday up against last Tuesday.
-  for (const row of prevRows) {
-    const i = Math.floor((Date.parse(row.at) - prevStartMs) / step);
-    if (i >= 0 && i < count) buckets[i].prevAmount += row.amount;
-  }
+  for (const row of prevRows) place(row, prevStartMs, "prevAmount");
   return buckets;
 }

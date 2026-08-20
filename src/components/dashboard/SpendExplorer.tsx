@@ -144,7 +144,13 @@ export function SpendExplorer({
   const bars = useMemo(
     () =>
       mode === "time"
-        ? timeBuckets(scoped, prevScoped, window, window.prevStartISO, granularity)
+        ? timeBuckets(
+            scoped,
+            prevScoped,
+            window,
+            { startISO: window.prevStartISO, endISO: window.prevEndISO },
+            granularity
+          )
         : [],
     [mode, scoped, prevScoped, window, granularity]
   );
@@ -164,10 +170,12 @@ export function SpendExplorer({
     reset(setPath)([...path, key]);
   }
 
-  // The value and label shown as the scope's headline, in both chart modes.
-  const headlineValue = activeBar !== null ? bars[activeBar].amount : total;
-  const headlineLabel =
-    activeBar !== null ? bucketReadout(bars[activeBar], granularity) : scopeName;
+  // The headline is always the total for what the pills select - the same
+  // number the pie centres and the comparison card show. A tapped bar is
+  // reported on its own line underneath rather than replacing it: swapping the
+  // hero number for one bucket's amount left the screen showing a figure that
+  // contradicted the selected pill.
+  const selectedBucket = activeBar !== null ? bars[activeBar] : null;
 
   return (
     <section className="flex flex-col gap-4">
@@ -221,12 +229,25 @@ export function SpendExplorer({
           <div>
             <div className="mb-3">
               <div className="text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums text-[var(--sk-ink)]">
-                {formatInr(headlineValue)}
+                {formatInr(total)}
               </div>
               <div className="mt-1.5 text-[0.8125rem] text-[var(--sk-ink-3)]">
-                {headlineLabel}
-                {activeBar === null && crumbs.length > 0 && ` · ${window.label}`}
+                {scopeName}
+                {crumbs.length > 0 && ` · ${window.label}`}
               </div>
+              {selectedBucket && (
+                <div className="mt-2 flex flex-wrap items-baseline gap-x-2 text-[0.8125rem]">
+                  <span className="font-semibold text-[var(--sk-ink)]">
+                    {bucketReadout(selectedBucket, granularity)}
+                  </span>
+                  <span className="tabular-nums text-[var(--sk-ink-2)]">
+                    {formatInr(selectedBucket.amount)}
+                  </span>
+                  <span className="tabular-nums text-[var(--sk-ink-3)]">
+                    · {window.prevLabel} {formatInr(selectedBucket.prevAmount)}
+                  </span>
+                </div>
+              )}
             </div>
             <TimeBars
               buckets={bars}
