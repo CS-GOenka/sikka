@@ -50,3 +50,44 @@ export function formatReceived(phoneReceivedAt: string | null, serverCreatedAt: 
   if (!serverCreatedAt) return "—";
   return new Date(serverCreatedAt).toLocaleString("en-IN", DISPLAY_FORMAT);
 }
+
+// Compact variant for the /transactions Date column, which has to fit four
+// columns onto a phone screen without horizontal scroll. Drops the time (the
+// full timestamp is still shown in the row's expanded details) - "19 Aug" vs
+// "19 Aug, 10:22 pm" is the difference between fitting and not.
+const SHORT_FORMAT: Intl.DateTimeFormatOptions = {
+  timeZone: "Asia/Kolkata",
+  day: "2-digit",
+  month: "short",
+};
+const SHORT_FORMAT_WITH_YEAR: Intl.DateTimeFormatOptions = {
+  ...SHORT_FORMAT,
+  year: "2-digit",
+};
+
+// The year is shown only when it isn't the current one. The list spans two
+// years of data and can be sorted or filtered back into 2024, where a bare
+// "22 Jul" is genuinely ambiguous - but printing the year on every row would
+// cost width on the ~95% of rows where it says nothing.
+function shortFormatFor(d: Date): Intl.DateTimeFormatOptions {
+  const istYear = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+  });
+  return istYear.format(d) === istYear.format(new Date())
+    ? SHORT_FORMAT
+    : SHORT_FORMAT_WITH_YEAR;
+}
+
+export function formatReceivedShort(
+  phoneReceivedAt: string | null,
+  serverCreatedAt: string | null
+): string {
+  const d = phoneReceivedAt
+    ? parsePhoneReceivedAt(phoneReceivedAt)
+    : serverCreatedAt
+      ? new Date(serverCreatedAt)
+      : null;
+  if (!d || Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-IN", shortFormatFor(d));
+}

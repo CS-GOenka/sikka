@@ -1,17 +1,28 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
-import { CategoryPicker } from "@/components/CategoryPicker";
-import { StarToggle } from "@/components/StarToggle";
 import { RefreshOnVisible } from "@/components/RefreshOnVisible";
-import { formatReceived } from "@/lib/formatReceived";
+import { TransactionRow, type RowData } from "@/components/TransactionRow";
+import { TransactionFilters, type FilterOption } from "@/components/TransactionFilters";
+import { formatReceived, formatReceivedShort } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
+import {
+  parseListState,
+  buildQuery,
+  hasAnyFilter,
+  istDayStartUtc,
+  istDayEndUtc,
+  SORT_COLUMN,
+  UNCATEGORIZED,
+  type SortKey,
+  type SortDir,
+} from "@/lib/transactionQuery";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
 
-type TransactionRow = {
+type TransactionQueryRow = {
   id: number;
   payee: string | null;
   amount: number | null;
@@ -19,16 +30,65 @@ type TransactionRow = {
   transaction_date: string | null;
   type: string;
   payment_method: string;
+  status: string | null;
+  account_type: string | null;
+  card_or_account: string | null;
+  note: string | null;
   is_transfer: boolean;
   starred: boolean;
   categories: { name: string } | null;
   raw_messages: { created_at: string; phone_received_at: string | null } | null;
 };
 
-function formatAmount(amount: number | null, currency: string, type: string) {
-  if (amount === null) return "—";
-  const sign = type === "debit" ? "-" : type === "credit" ? "+" : "";
-  return `${sign}${currency} ${amount.toLocaleString("en-IN")}`;
+const METHOD_OPTIONS: FilterOption[] = [
+  "upi", "card", "neft", "imps", "rtgs", "ach", "mandate",
+].map((v) => ({ value: v, label: v }));
+const TYPE_OPTIONS: FilterOption[] = [
+  { value: "debit", label: "debit" },
+  { value: "credit", label: "credit" },
+  { value: "needs_review", label: "needs review" },
+];
+const STATUS_OPTIONS: FilterOption[] = [
+  "success", "pending", "failed", "revoked",
+].map((v) => ({ value: v, label: v }));
+const ACCOUNT_TYPE_OPTIONS: FilterOption[] = [
+  { value: "savings", label: "savings" },
+  { value: "credit_card", label: "credit card" },
+  { value: "unknown", label: "unknown" },
+];
+
+// Header cell that toggles sort. A plain link, so sorting works without
+// client-side JS and every sorted view is a shareable URL.
+function SortHeader({
+  label,
+  column,
+  sort,
+  dir,
+  href,
+  className = "",
+}: {
+  label: string;
+  column: SortKey;
+  sort: SortKey;
+  dir: SortDir;
+  href: string;
+  className?: string;
+}) {
+  const active = sort === column;
+  return (
+    <th scope="col" className={`px-1.5 py-2 font-medium sm:px-3 ${className}`}>
+      <Link
+        href={href}
+        aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+        className={active ? "font-semibold underline underline-offset-2" : ""}
+      >
+        {label}
+        <span aria-hidden className={active ? "" : "text-zinc-300 dark:text-zinc-600"}>
+          {active ? (dir === "asc" ? " ▲" : " ▼") : " ↕"}
+        </span>
+      </Link>
+    </th>
+  );
 }
 
 export default async function TransactionsPage({
@@ -47,125 +107,210 @@ export default async function TransactionsPage({
 async function renderTransactionsPage(
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 ) {
-  const { page: pageParam } = await searchParams;
-  const page = Math.max(1, parseInt(Array.isArray(pageParam) ? pageParam[0] : pageParam ?? "1", 10) || 1);
+  const params = await searchParams;
+  const { filters, sort, dir, page } = parseListState(params);
   const from = (page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
+  const filtered = hasAnyFilter(filters);
+
+  // "estimated" uses Postgres table statistics instead of a real COUNT(*), so
+  // it stays fast as the table grows - but it can't reflect a filtered
+  // predicate, and a wrong "N matching" beside active filters would be
+  // misleading. Exact only when filters are on.
+  const countMode = filtered ? "exact" : "estimated";
+
+  let query = supabase
+    .from("transactions")
+    .select(
+      "id, payee, amount, currency, transaction_date, type, payment_method, status, account_type, card_or_account, note, is_transfer, starred, categories(name), raw_messages!inner(created_at, phone_received_at)",
+      { count: countMode }
+    )
+    .neq("type", "ignored");
+
+  // AND across columns; OR within a single multi-select.
+  if (filters.types.length) query = query.in("type", filters.types);
+  if (filters.methods.length) query = query.in("payment_method", filters.methods);
+  if (filters.statuses.length) query = query.in("status", filters.statuses);
+  if (filters.accountTypes.length) query = query.in("account_type", filters.accountTypes);
+
+  if (filters.categories.length) {
+    // "No category" can't be expressed as an id, so it becomes an OR arm.
+    const ids = filters.categories.filter((c) => c !== UNCATEGORIZED);
+    const wantsNone = filters.categories.includes(UNCATEGORIZED);
+    if (wantsNone && ids.length) {
+      query = query.or(`category_id.is.null,category_id.in.(${ids.join(",")})`);
+    } else if (wantsNone) {
+      query = query.is("category_id", null);
+    } else {
+      query = query.in("category_id", ids);
+    }
+  }
+
+  const amountMin = parseFloat(filters.amountMin);
+  const amountMax = parseFloat(filters.amountMax);
+  if (Number.isFinite(amountMin)) query = query.gte("amount", amountMin);
+  if (Number.isFinite(amountMax)) query = query.lte("amount", amountMax);
+
+  // Date filtering is on phone_received_at (the receipt anchor used everywhere
+  // else in the app) rather than transaction_date, which is null on 37 rows.
+  // The !inner join above is what makes this filter the parent rows, not just
+  // the embed.
+  const fromISO = filters.dateFrom ? istDayStartUtc(filters.dateFrom) : null;
+  const toISO = filters.dateTo ? istDayEndUtc(filters.dateTo) : null;
+  if (fromISO) query = query.gte("raw_messages.phone_received_at", fromISO);
+  if (toISO) query = query.lt("raw_messages.phone_received_at", toISO);
+
+  const payeeTerm = filters.payee.trim();
+  if (payeeTerm) {
+    // Escape PostgREST's own wildcards so a literal % or _ searches as typed.
+    const escaped = payeeTerm.replace(/[%_]/g, (m) => `\\${m}`);
+    query = query.ilike("payee", `%${escaped}%`);
+  }
+
+  const ascending = dir === "asc";
+  query = query
+    .order(SORT_COLUMN[sort], { ascending, nullsFirst: false })
+    // Stable tiebreak, so equal values don't shuffle between pages.
+    .order("id", { ascending: false })
+    .range(from, to);
 
   const [{ data, count, error }, categories] = await Promise.all([
-    supabase
-      .from("transactions")
-      .select(
-        "id, payee, amount, currency, transaction_date, type, payment_method, is_transfer, starred, categories(name), raw_messages(created_at, phone_received_at)",
-        // "estimated" trades exact precision for speed that doesn't degrade
-        // as the table grows - uses Postgres's own table statistics instead
-        // of a real COUNT(*) scan. Fine for a "N total" label.
-        { count: "estimated" }
-      )
-      .neq("type", "ignored")
-      .order("transaction_date", { ascending: false, nullsFirst: false })
-      .order("id", { ascending: false })
-      .range(from, to)
-      .returns<TransactionRow[]>(),
+    query.returns<TransactionQueryRow[]>(),
     getAssignableCategories(),
   ]);
 
   if (error) {
     return (
-      <main className="p-6">
-        <p className="text-red-600">Failed to load transactions: {error.message}</p>
+      <main className="p-4">
+        <h1 className="text-xl font-semibold">Transactions</h1>
+        <p className="mt-4 text-red-600">Failed to load transactions: {error.message}</p>
       </main>
     );
   }
 
-  const rows = data ?? [];
+  const rows: RowData[] = (data ?? []).map((r) => ({
+    id: r.id,
+    payee: r.payee,
+    amount: r.amount,
+    currency: r.currency,
+    transaction_date: r.transaction_date,
+    type: r.type,
+    payment_method: r.payment_method,
+    status: r.status,
+    account_type: r.account_type,
+    card_or_account: r.card_or_account,
+    note: r.note,
+    is_transfer: r.is_transfer,
+    starred: r.starred,
+    categoryName: r.categories?.name ?? null,
+    dateShort: formatReceivedShort(
+      r.raw_messages?.phone_received_at ?? null,
+      r.raw_messages?.created_at ?? null
+    ),
+    receivedFull: formatReceived(
+      r.raw_messages?.phone_received_at ?? null,
+      r.raw_messages?.created_at ?? null
+    ),
+  }));
+
   const total = count ?? 0;
   const hasNext = to < total - 1;
   const hasPrev = page > 1;
 
+  const categoryOptions: FilterOption[] = [
+    { value: UNCATEGORIZED, label: "No category" },
+    ...categories
+      .map((c) => ({ value: String(c.id), label: c.name }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  ];
+
+  // Toggles direction when re-tapping the active column; a new column starts
+  // descending, which is the useful default for dates and amounts.
+  const sortHref = (column: SortKey) => {
+    const nextDir: SortDir = sort === column && dir === "desc" ? "asc" : "desc";
+    return `/transactions${buildQuery({ filters, sort: column, dir: nextDir })}`;
+  };
+  const pageHref = (n: number) =>
+    `/transactions${buildQuery({ filters, sort, dir, page: n })}`;
+
   return (
-    <main className="flex flex-col gap-4 p-6">
+    <main className="flex flex-col gap-3 p-3 sm:gap-4 sm:p-6">
       <RefreshOnVisible />
       <h1 className="text-xl font-semibold">Transactions</h1>
-      <p className="text-sm text-zinc-500">{total} total</p>
 
-      <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-        <table className="min-w-full text-sm">
+      <TransactionFilters
+        initial={filters}
+        sort={sort}
+        dir={dir}
+        categoryOptions={categoryOptions}
+        methodOptions={METHOD_OPTIONS}
+        typeOptions={TYPE_OPTIONS}
+        accountTypeOptions={ACCOUNT_TYPE_OPTIONS}
+        statusOptions={STATUS_OPTIONS}
+        resultCount={total}
+      />
+
+      {/* table-fixed + explicit widths + truncation is what guarantees the four
+          columns fit a phone screen; without it a long payee widens the table
+          and reintroduces horizontal scroll. */}
+      <div className="rounded border border-zinc-200 dark:border-zinc-800">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[4.2rem] sm:w-28" />
+            <col className="w-[5.2rem] sm:w-32" />
+            <col className="w-[7.5rem] sm:w-56" />
+            <col />
+          </colgroup>
           <thead className="bg-zinc-50 text-left dark:bg-zinc-900">
             <tr>
-              <th className="px-3 py-2 font-medium"></th>
-              <th
-                className="px-3 py-2 font-medium"
-                title="When the message was received, not necessarily the exact transaction moment"
-              >
-                Received
-              </th>
-              <th className="px-3 py-2 font-medium">Payee</th>
-              <th className="px-3 py-2 font-medium">Amount</th>
-              <th className="px-3 py-2 font-medium">Type</th>
-              <th className="px-3 py-2 font-medium">Method</th>
-              <th className="px-3 py-2 font-medium">Category</th>
+              <SortHeader label="Date" column="date" sort={sort} dir={dir} href={sortHref("date")} />
+              <SortHeader
+                label="Amount"
+                column="amount"
+                sort={sort}
+                dir={dir}
+                href={sortHref("amount")}
+                className="text-right"
+              />
+              <SortHeader
+                label="Category"
+                column="category"
+                sort={sort}
+                dir={dir}
+                href={sortHref("category")}
+              />
+              <SortHeader
+                label="Payee"
+                column="payee"
+                sort={sort}
+                dir={dir}
+                href={sortHref("payee")}
+              />
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                <td className="px-3 py-2">
-                  <StarToggle transactionId={row.id} starred={row.starred} />
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-zinc-500">
-                  {formatReceived(row.raw_messages?.phone_received_at ?? null, row.raw_messages?.created_at ?? null)}
-                </td>
-                <td className="px-3 py-2">{row.payee ?? "—"}</td>
-                <td
-                  className={`whitespace-nowrap px-3 py-2 font-medium ${
-                    row.type === "credit"
-                      ? "text-emerald-600"
-                      : row.type === "debit"
-                        ? "text-zinc-900 dark:text-zinc-100"
-                        : "text-zinc-500"
-                  }`}
-                >
-                  {formatAmount(row.amount, row.currency, row.type)}
-                </td>
-                <td className="px-3 py-2 text-zinc-500">{row.type}</td>
-                <td className="px-3 py-2 text-zinc-500">{row.payment_method}</td>
-                <td className="px-3 py-2">
-                  {row.is_transfer ? (
-                    <span
-                      className="inline-flex items-center rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                      title="Transfer (e.g. credit-card bill payment) — excluded from spend"
-                    >
-                      Transfer · not spend
-                    </span>
-                  ) : (
-                    <CategoryPicker
-                      transactionId={row.id}
-                      currentCategoryName={row.categories?.name ?? null}
-                      categories={categories}
-                    />
-                  )}
-                </td>
-              </tr>
+              <TransactionRow key={row.id} row={row} categories={categories} />
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-zinc-500">
-                  No transactions found.
+                <td colSpan={4} className="px-3 py-6 text-center text-zinc-500">
+                  No transactions match these filters.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
       <p className="text-xs text-zinc-400">
-        &ldquo;Received&rdquo; is when the message reached the phone or server, not necessarily the exact
-        transaction time.
+        Tap a row for the remaining fields (type, method, status, account, note) and to star it.
+        Date is when the message was received, not necessarily the exact transaction moment.
       </p>
 
       <div className="flex items-center justify-between text-sm">
         <Link
-          href={`/transactions?page=${page - 1}`}
+          href={pageHref(page - 1)}
           aria-disabled={!hasPrev}
           className={`rounded border border-zinc-300 px-3 py-1.5 dark:border-zinc-700 ${
             hasPrev ? "hover:bg-zinc-100 dark:hover:bg-zinc-900" : "pointer-events-none opacity-40"
@@ -175,7 +320,7 @@ async function renderTransactionsPage(
         </Link>
         <span className="text-zinc-500">Page {page}</span>
         <Link
-          href={`/transactions?page=${page + 1}`}
+          href={pageHref(page + 1)}
           aria-disabled={!hasNext}
           className={`rounded border border-zinc-300 px-3 py-1.5 dark:border-zinc-700 ${
             hasNext ? "hover:bg-zinc-100 dark:hover:bg-zinc-900" : "pointer-events-none opacity-40"

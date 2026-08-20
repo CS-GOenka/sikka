@@ -11,10 +11,14 @@ export function CategoryPicker({
   transactionId,
   currentCategoryName,
   categories,
+  compact = false,
 }: {
   transactionId: number;
   currentCategoryName: string | null;
   categories: CategoryOption[];
+  // Narrow variant for the /transactions table, where this has to share a
+  // phone screen with three other columns.
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -58,10 +62,12 @@ export function CategoryPicker({
   }
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 items-center gap-2">
         <select
-          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
+          className={`w-full min-w-0 rounded border border-zinc-300 bg-white disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 ${
+            compact ? "px-1 py-1 text-[11px] sm:text-xs" : "px-2 py-1 text-sm"
+          }`}
           value={currentCategoryName ?? ""}
           disabled={pending}
           onChange={handleChange}
@@ -84,7 +90,9 @@ export function CategoryPicker({
             </optgroup>
           ))}
         </select>
-        {pending && <span className="text-xs text-zinc-400">Saving…</span>}
+        {pending && (
+          <span className="shrink-0 text-xs text-zinc-400">{compact ? "…" : "Saving…"}</span>
+        )}
       </div>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
