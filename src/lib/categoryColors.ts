@@ -102,21 +102,24 @@ export const UNCATEGORISED_COLOR = "#9a938b";
 /** The folded tail: a drawing device, not a category. */
 export const ROLLUP_COLOR = "#bdb6ab";
 /**
- * The bar chart's two series. Fixed blue and orange, not category colours:
- * that chart's colour dimension is WHICH PERIOD, not which category, so tying
- * it to the scope's hue was encoding the wrong thing - and a hue against a
- * wash of itself is exactly the pair people cannot tell apart. Blue against
- * orange is the best-separated pair in the palette by a distance: OKLab dE
- * 32.1 to normal vision and 27.2 under simulated protanopia, against a target
- * of 8, with both clearing 3:1 on white.
+ * The bar chart's two series. That chart's colour dimension is WHICH PERIOD,
+ * not which category, so it deliberately uses neither the category hues nor a
+ * hue against a wash of itself - the latter being exactly the pair people
+ * cannot separate at a glance.
  *
- * They do double as Transport's and Food's category hues in the donut. That is
- * tolerable because the two charts encode different things and the bar chart
- * carries a legend naming both series; it is the reason the legend is not
- * optional here.
+ * Both sit in the widest arcs no category occupies: the categories hold 25,
+ * 41, 142, 162, 256, 284 and 357 degrees (with the UI accent near 75), leaving
+ * 162->256 and 284->357 as the two real gaps. Teal takes the first at 205 and
+ * purple the second at 320, so neither can be read back as a category the way
+ * blue and orange could be read as Transport and Food.
+ *
+ * Measured, not guessed: OKLab dE 27.1 to normal vision and 9.9 under
+ * simulated deuteranopia (target 8), both clearing 3:1 on white. The brighter
+ * purple at this hue fails the CVD gate against teal at dE 6.0, which is why
+ * this one is stepped darker.
  */
-export const SERIES_CURRENT = "#3986e5";
-export const SERIES_COMPARISON = "#d95821";
+export const SERIES_CURRENT = "#0698a4";
+export const SERIES_COMPARISON = "#a23db8";
 
 export interface CategoryPalette {
   /** The colour a category wears as a slice or a bar. */
