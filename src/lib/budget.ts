@@ -59,7 +59,9 @@ export function budgetDayWindowUtc(
 // not just a sum, so the fetch lives here - one definition of "qualifying
 // spend" that both the budget total and the breakdown read from.
 export interface SpendRow {
+  id: number;
   amount: number;
+  payee: string | null;
   categoryId: number | null;
   categoryName: string | null;
   parentId: number | null;
@@ -67,7 +69,9 @@ export interface SpendRow {
 }
 
 interface SpendQueryRow {
+  id: number;
   amount: number | null;
+  payee: string | null;
   category_id: number | null;
   categories: { counts_as_spend: boolean; name: string; parent_id: number | null } | null;
   raw_messages: { phone_received_at: string | null } | null;
@@ -94,7 +98,7 @@ export async function fetchQualifyingSpendRows(window: {
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "amount, category_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
+      "id, amount, payee, category_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
     )
     .eq("type", "debit")
     .eq("status", "success")
@@ -110,7 +114,9 @@ export async function fetchQualifyingSpendRows(window: {
   for (const row of data ?? []) {
     if (typeof row.amount !== "number" || !countsAsSpend(row)) continue;
     rows.push({
+      id: row.id,
       amount: row.amount,
+      payee: row.payee,
       categoryId: row.category_id,
       categoryName: row.categories?.name ?? null,
       parentId: row.categories?.parent_id ?? null,

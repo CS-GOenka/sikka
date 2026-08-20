@@ -2,11 +2,13 @@ import { supabase } from "@/lib/supabase";
 import { fetchQualifyingSpendRows, getBudgetSettings } from "@/lib/budget";
 import { dashboardFetchWindow, periodComparisons } from "@/lib/periods";
 import {
-  bucketsInWindow,
   percentChange,
-  sumInWindow,
+  rowsInWindow,
+  sumAmount,
+  type CategoryNode,
   type ComparisonCard,
-  type PeriodBreakdown,
+  type DashRow,
+  type PeriodWindow,
 } from "@/lib/dashboard";
 import { ComparisonCards } from "@/components/dashboard/ComparisonCards";
 import { SpendExplorer } from "@/components/dashboard/SpendExplorer";
@@ -32,7 +34,7 @@ async function renderDashboard() {
   // month, last month, both weeks, both days - sits inside the span from the
   // previous month's start to the end of today, so the six totals are sliced
   // out of a single fetch in memory rather than costing six round trips.
-  const [rows, { data: categoryRows, error: categoryError }] = await Promise.all([
+  const [spendRows, { data: categoryRows, error: categoryError }] = await Promise.all([
     fetchQualifyingSpendRows(dashboardFetchWindow(periods)),
     supabase.from("categories").select("id, name, parent_id").returns<
       { id: number; name: string; parent_id: number | null }[]
@@ -49,12 +51,27 @@ async function renderDashboard() {
     );
   }
 
-  const categoryNames = new Map((categoryRows ?? []).map((c) => [c.id, c.name]));
-  const parents = new Map((categoryRows ?? []).map((c) => [c.id, c.parent_id]));
+  const categories: CategoryNode[] = (categoryRows ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    parentId: c.parent_id,
+  }));
+
+  // A row with no receipt time can't be placed in any window, so it is dropped
+  // here rather than being carried to the browser to be ignored there.
+  const rows: DashRow[] = spendRows
+    .filter((r): r is typeof r & { receivedAt: string } => r.receivedAt !== null)
+    .map((r) => ({
+      id: r.id,
+      amount: r.amount,
+      payee: r.payee,
+      at: r.receivedAt,
+      categoryId: r.categoryId,
+    }));
 
   const cards: ComparisonCard[] = periods.map((p) => {
-    const current = sumInWindow(rows, p.current);
-    const previous = sumInWindow(rows, p.previous);
+    const current = sumAmount(rowsInWindow(rows, p.current));
+    const previous = sumAmount(rowsInWindow(rows, p.previous));
     return {
       key: p.key,
       label: p.label,
@@ -66,12 +83,14 @@ async function renderDashboard() {
     };
   });
 
-  // The pills re-scope the donut without a round trip, so all three breakdowns
-  // are computed up front and switching is instant.
-  const breakdowns: PeriodBreakdown[] = periods.map((p) => ({
+  // The pills, the filter, the chart toggle and every drill level are computed
+  // in the browser from these rows, so none of them costs a round trip. At
+  // roughly 200 rows for a two-month span that payload is a few tens of KB.
+  const periodWindows: PeriodWindow[] = periods.map((p) => ({
     key: p.key,
     label: p.label,
-    buckets: bucketsInWindow(rows, p.current, categoryNames, parents),
+    startISO: p.current.startISO,
+    endISO: p.current.endISO,
   }));
 
   return (
@@ -79,7 +98,7 @@ async function renderDashboard() {
       <h1 className="sr-only">Sikka spending dashboard</h1>
       <RefreshOnVisible />
       <ComparisonCards cards={cards} />
-      <SpendExplorer periods={breakdowns} />
+      <SpendExplorer rows={rows} categories={categories} periods={periodWindows} />
     </main>
   );
 }

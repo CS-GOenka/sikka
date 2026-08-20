@@ -1,0 +1,42 @@
+// Display formatting for the dashboard's time axis.
+//
+// The account holder and all transaction data are in IST, and every boundary
+// on this screen (budget days, weeks, months) is an IST boundary - so the
+// labels are pinned to Asia/Kolkata rather than to the browser's zone. A phone
+// carried abroad would otherwise label a bar with a different day than the bar
+// actually covers.
+const IST = "Asia/Kolkata";
+
+function fmt(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-IN", { timeZone: IST, ...options });
+}
+
+const DAY_LONG = fmt({ weekday: "short", day: "numeric", month: "short" });
+const DAY_NUMBER = fmt({ day: "numeric" });
+const DATE_TIME = fmt({ day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" });
+const HOUR = fmt({ hour: "numeric" });
+
+/** "Thu 20 Aug" - the readout above a daily bar. */
+export function istDay(ms: number): string {
+  return DAY_LONG.format(ms);
+}
+
+/** "20" - a tick under a daily bar, where the month is already established. */
+export function istDayNumber(ms: number): string {
+  return DAY_NUMBER.format(ms);
+}
+
+/** "20 Aug, 10:22 pm" - a transaction's receipt time in the drill-down list. */
+export function istDateTime(ms: number): string {
+  return DATE_TIME.format(ms);
+}
+
+/** "10 pm" - a tick under an hourly bar. */
+export function istHour(ms: number): string {
+  return HOUR.format(ms);
+}
+
+/** "10-11 pm" - the readout above an hourly bar, which covers a whole hour. */
+export function istHourRange(ms: number): string {
+  return `${HOUR.format(ms)}-${HOUR.format(ms + 60 * 60 * 1000)}`;
+}
