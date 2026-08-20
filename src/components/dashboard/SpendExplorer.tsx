@@ -22,8 +22,9 @@ import {
 } from "@/lib/dashboard";
 import type { PeriodKey } from "@/lib/periods";
 import {
-  COMPARISON_COLOR,
   ROLLUP_COLOR,
+  SERIES_COMPARISON,
+  SERIES_CURRENT,
   UNCATEGORISED_COLOR,
   buildCategoryPalette,
   readableInkOn,
@@ -182,7 +183,14 @@ export function SpendExplorer({
   // First tap selects, second tap on the same slice drills. The detail rows
   // below go straight to the drill, since a row already names and values its
   // category - there is nothing for a select step to reveal there.
-  function tapSlice(key: string) {
+  function tapSlice(key: string | null) {
+    // Anywhere that isn't a segment - the hole, the space beside the ring -
+    // clears the selection. Without it a selected slice could only be swapped
+    // for another one, never simply put down.
+    if (key === null) {
+      setSelectedSlice(null);
+      return;
+    }
     if (key === ROLLUP) {
       setExpanded(true);
       return;
@@ -294,8 +302,8 @@ export function SpendExplorer({
             <TimeBars
               buckets={bars}
               granularity={granularity}
-              currentColor={palette.solid(scopeCategoryId)}
-              comparisonColor={COMPARISON_COLOR}
+              currentColor={SERIES_CURRENT}
+              comparisonColor={SERIES_COMPARISON}
               currentLabel={crumbs.length > 0 ? `${scopeName} · ${window.label}` : window.label}
               comparisonLabel={window.prevLabel}
               selected={activeBar}
@@ -600,7 +608,7 @@ function Donut({
   hint: string | null;
   filtered: boolean;
   selectedKey: string | null;
-  onTap: (key: string) => void;
+  onTap: (key: string | null) => void;
 }) {
   let offset = 0;
   const arcs = slices.map((slice) => {
@@ -611,6 +619,12 @@ function Donut({
   });
 
   return (
+    // The deselect target is this whole block, not just the ring's hole, so a
+    // thumb landing in the space beside the donut puts the selection down too.
+    <div
+      onClick={() => onTap(null)}
+      className={`w-full ${selectedKey ? "cursor-pointer" : ""}`}
+    >
     <div className="relative mx-auto w-full max-w-[17.5rem]">
       <svg
         viewBox={`0 0 ${SIZE} ${SIZE}`}
@@ -638,7 +652,10 @@ function Donut({
                 strokeDasharray={`${Math.max(length - GAP, 1)} ${CIRCUMFERENCE}`}
                 strokeDashoffset={-start}
                 transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
-                onClick={() => onTap(slice.key)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTap(slice.key);
+                }}
                 className="cursor-pointer"
               >
                 <title>{`${slice.name}: ${formatInr(slice.amount)} (${formatShare(slice.share)})`}</title>
@@ -688,6 +705,7 @@ function Donut({
           <span className="mt-0.5 text-[0.6875rem] font-medium text-[var(--sk-accent-ink)]">filtered</span>
         )}
       </div>
+    </div>
     </div>
   );
 }

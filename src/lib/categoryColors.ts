@@ -102,28 +102,25 @@ export const UNCATEGORISED_COLOR = "#9a938b";
 /** The folded tail: a drawing device, not a category. */
 export const ROLLUP_COLOR = "#bdb6ab";
 /**
- * "All spend" is every hue at once, so it gets none of them - a deep amber
- * instead. Deliberately NOT the yellow accent itself: yellow is 1.5:1 on white,
- * which is fine behind dark text on a pill and useless as a chart mark.
+ * The bar chart's two series. Fixed blue and orange, not category colours:
+ * that chart's colour dimension is WHICH PERIOD, not which category, so tying
+ * it to the scope's hue was encoding the wrong thing - and a hue against a
+ * wash of itself is exactly the pair people cannot tell apart. Blue against
+ * orange is the best-separated pair in the palette by a distance: OKLab dE
+ * 32.1 to normal vision and 27.2 under simulated protanopia, against a target
+ * of 8, with both clearing 3:1 on white.
+ *
+ * They do double as Transport's and Food's category hues in the donut. That is
+ * tolerable because the two charts encode different things and the bar chart
+ * carries a legend naming both series; it is the reason the legend is not
+ * optional here.
  */
-export const ALL_SPEND_COLOR = "#8a5f00";
-
-/**
- * The comparison series, for every scope. A single achromatic warm grey rather
- * than a wash of the current series' hue: two shades of one colour are easy to
- * mistake for each other at a glance, and having no chroma at all means this
- * can never be read as one of the category hues either. "Grey is the past"
- * then stays true whatever the user has drilled into.
- */
-export const COMPARISON_COLOR = "#aca396";
+export const SERIES_CURRENT = "#3986e5";
+export const SERIES_COMPARISON = "#d95821";
 
 export interface CategoryPalette {
   /** The colour a category wears as a slice or a bar. */
   color: (categoryId: number) => string;
-  /** The comparison series colour. One neutral for every scope - see COMPARISON_COLOR. */
-  muted: () => string;
-  /** The solid step of a category's hue, for a current series. */
-  solid: (categoryId: number | null) => string;
   /** Shades of one category's hue, for slicing something that isn't a category (payees). */
   shades: (categoryId: number | null, count: number) => string[];
 }
@@ -186,9 +183,6 @@ export function buildCategoryPalette(categories: CategoryNode[]): CategoryPalett
   return {
     color: (categoryId) =>
       signatureOf.get(categoryId) ?? childShade.get(categoryId) ?? UNCATEGORISED_COLOR,
-    solid: (categoryId) =>
-      categoryId == null ? ALL_SPEND_COLOR : rampOf(categoryId)[2],
-    muted: () => COMPARISON_COLOR,
     shades: (categoryId, count) => spread(rampOf(categoryId), count),
   };
 }
