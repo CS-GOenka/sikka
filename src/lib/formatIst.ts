@@ -15,6 +15,9 @@ const DAY_LONG = fmt({ weekday: "short", day: "numeric", month: "short" });
 const DAY_NUMBER = fmt({ day: "numeric" });
 const DATE_TIME = fmt({ day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" });
 const HOUR = fmt({ hour: "numeric" });
+const DAY_MONTH = fmt({ day: "numeric", month: "short" });
+const MONTH_YEAR = fmt({ month: "long", year: "numeric" });
+const AXIS_DAY = fmt({ day: "2-digit", month: "short" });
 
 /** "Thu 20 Aug" - the readout above a daily bar. */
 export function istDay(ms: number): string {
@@ -39,4 +42,22 @@ export function istHour(ms: number): string {
 /** "10-11 pm" - the readout above an hourly bar, which covers a whole hour. */
 export function istHourRange(ms: number): string {
   return `${HOUR.format(ms)}-${HOUR.format(ms + 60 * 60 * 1000)}`;
+}
+
+/** "18 Aug" - the stepper's label for a week. */
+export function istDayMonth(ms: number): string {
+  return DAY_MONTH.format(ms);
+}
+
+/** "August 2026" - the stepper's label for a month. */
+export function istMonthYear(ms: number): string {
+  return MONTH_YEAR.format(ms);
+}
+
+/**
+ * "19-Aug" - a tick under a daily bar. Hyphenated and always two digits so the
+ * ticks are the same width and read as one column of dates rather than as prose.
+ */
+export function istAxisDay(ms: number): string {
+  return AXIS_DAY.format(ms).replace(/\s+/, "-");
 }

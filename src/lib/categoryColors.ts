@@ -30,6 +30,22 @@
 // a legend - identity never rests on hue alone.
 import type { CategoryNode } from "@/lib/dashboard";
 
+/**
+ * Ink that stays legible on top of a given fill - for the percentage printed on
+ * a pie segment, where the segment's colour is whatever the category owns.
+ * Computed from relative luminance rather than guessed per colour.
+ */
+export function readableInkOn(fill: string): string {
+  const n = parseInt(fill.slice(1), 16);
+  const lin = (c: number) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const luminance =
+    0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return luminance > 0.42 ? "#1c1917" : "#ffffff";
+}
+
 interface Hue {
   name: string;
   /** Five shades, lightest to darkest. */
@@ -86,18 +102,26 @@ export const UNCATEGORISED_COLOR = "#9a938b";
 /** The folded tail: a drawing device, not a category. */
 export const ROLLUP_COLOR = "#bdb6ab";
 /**
- * "All spend" is every hue at once, so it gets none of them - a warm neutral
- * instead. Deliberately NOT the yellow accent: yellow is 1.5:1 on white, which
- * is fine behind dark text on a pill and useless as a chart mark.
+ * "All spend" is every hue at once, so it gets none of them - a deep amber
+ * instead. Deliberately NOT the yellow accent itself: yellow is 1.5:1 on white,
+ * which is fine behind dark text on a pill and useless as a chart mark.
  */
-const ALL_SPEND_COLOR = "#8a8177";
-const ALL_SPEND_MUTED = "#d3ccc2";
+export const ALL_SPEND_COLOR = "#8a5f00";
+
+/**
+ * The comparison series, for every scope. A single achromatic warm grey rather
+ * than a wash of the current series' hue: two shades of one colour are easy to
+ * mistake for each other at a glance, and having no chroma at all means this
+ * can never be read as one of the category hues either. "Grey is the past"
+ * then stays true whatever the user has drilled into.
+ */
+export const COMPARISON_COLOR = "#aca396";
 
 export interface CategoryPalette {
   /** The colour a category wears as a slice or a bar. */
   color: (categoryId: number) => string;
-  /** The recessive wash of a category's hue, for a comparison series. */
-  muted: (categoryId: number | null) => string;
+  /** The comparison series colour. One neutral for every scope - see COMPARISON_COLOR. */
+  muted: () => string;
   /** The solid step of a category's hue, for a current series. */
   solid: (categoryId: number | null) => string;
   /** Shades of one category's hue, for slicing something that isn't a category (payees). */
@@ -164,10 +188,7 @@ export function buildCategoryPalette(categories: CategoryNode[]): CategoryPalett
       signatureOf.get(categoryId) ?? childShade.get(categoryId) ?? UNCATEGORISED_COLOR,
     solid: (categoryId) =>
       categoryId == null ? ALL_SPEND_COLOR : rampOf(categoryId)[2],
-    muted: (categoryId) =>
-      categoryId == null
-        ? ALL_SPEND_MUTED
-        : HUES.find((h) => h.ramp === rampOf(categoryId))?.muted ?? HUES[0].muted,
+    muted: () => COMPARISON_COLOR,
     shades: (categoryId, count) => spread(rampOf(categoryId), count),
   };
 }

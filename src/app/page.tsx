@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { fetchQualifyingSpendRows, getBudgetSettings } from "@/lib/budget";
-import { dashboardFetchWindow, periodComparisons } from "@/lib/periods";
+import { clampOffset, dashboardFetchWindows, periodComparisons } from "@/lib/periods";
 import {
   percentChange,
   rowsInWindow,
@@ -17,29 +17,46 @@ import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
+// The stepper lives in the URL rather than in component state: stepping to a
+// month outside the fetched span needs different rows, which only the server
+// can get. The pills stay client-side, so switching period is still instant and
+// only stepping costs a round trip.
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+function readOffset(params: Record<string, string | string[] | undefined>, key: string): number {
+  const raw = Array.isArray(params[key]) ? params[key][0] : params[key];
+  return clampOffset(parseInt(raw ?? "0", 10));
+}
+
+export default async function Home({ searchParams }: { searchParams: SearchParams }) {
   const endTiming = startTiming("GET /");
   try {
-    return await renderDashboard();
+    return await renderDashboard(await searchParams);
   } finally {
     endTiming();
   }
 }
 
-async function renderDashboard() {
+async function renderDashboard(params: Record<string, string | string[] | undefined>) {
   const { dayResetHour } = await getBudgetSettings();
-  const periods = periodComparisons(dayResetHour);
+  const periods = periodComparisons(dayResetHour, {
+    day: 0,
+    week: readOffset(params, "wo"),
+    month: readOffset(params, "mo"),
+  });
 
-  // One query for the whole screen. Every window the dashboard needs - this
-  // month, last month, both weeks, both days - sits inside the span from the
-  // previous month's start to the end of today, so the six totals are sliced
-  // out of a single fetch in memory rather than costing six round trips.
-  const [spendRows, { data: categoryRows, error: categoryError }] = await Promise.all([
-    fetchQualifyingSpendRows(dashboardFetchWindow(periods)),
+  // One query per contiguous span the screen needs, rather than one per window:
+  // at rest the six windows overlap into a single span, and they only separate
+  // when the stepper has walked a period away from today.
+  const [windowRows, { data: categoryRows, error: categoryError }] = await Promise.all([
+    Promise.all(dashboardFetchWindows(periods).map(fetchQualifyingSpendRows)),
     supabase.from("categories").select("id, name, parent_id").returns<
       { id: number; name: string; parent_id: number | null }[]
     >(),
   ]);
+  // Merged windows can still abut, and a row could in principle be returned by
+  // two of them, so the rows are keyed by id before anything sums them.
+  const spendRows = [...new Map(windowRows.flat().map((r) => [r.id, r])).values()];
 
   if (categoryError) {
     return (
@@ -94,6 +111,8 @@ async function renderDashboard() {
     prevStartISO: p.previous.startISO,
     prevEndISO: p.previous.endISO,
     prevLabel: p.comparisonName,
+    offset: p.offset,
+    canStepForward: p.canStepForward,
   }));
 
   return (

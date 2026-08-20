@@ -22,11 +22,14 @@ import {
 } from "@/lib/dashboard";
 import type { PeriodKey } from "@/lib/periods";
 import {
+  COMPARISON_COLOR,
   ROLLUP_COLOR,
   UNCATEGORISED_COLOR,
   buildCategoryPalette,
+  readableInkOn,
   type CategoryPalette,
 } from "@/lib/categoryColors";
+import { PeriodStepper } from "@/components/dashboard/PeriodStepper";
 import { formatInr } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
 import { TimeBars, bucketReadout } from "@/components/dashboard/TimeBars";
@@ -79,6 +82,11 @@ export function SpendExplorer({
   const [mode, setMode] = useState<ChartMode>("donut");
   const [selectedBar, setSelectedBar] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // Two-stage segment interaction: the first tap selects a slice (and takes
+  // over the centre label), the second drills into it. Drilling straight off
+  // one tap made it far too easy to fall a level deeper than intended, with
+  // nothing in between that just answers "how much was that one?".
+  const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
 
   const cats = useMemo(() => indexCategories(categories), [categories]);
   // One shared map, built once: the donut, the bars and the detail list all
@@ -93,6 +101,7 @@ export function SpendExplorer({
     return (value: T) => {
       setter(value);
       setSelectedBar(null);
+      setSelectedSlice(null);
       setExpanded(false);
     };
   }
@@ -170,6 +179,20 @@ export function SpendExplorer({
     reset(setPath)([...path, key]);
   }
 
+  // First tap selects, second tap on the same slice drills. The detail rows
+  // below go straight to the drill, since a row already names and values its
+  // category - there is nothing for a select step to reveal there.
+  function tapSlice(key: string) {
+    if (key === ROLLUP) {
+      setExpanded(true);
+      return;
+    }
+    if (selectedSlice === key) drillTo(key);
+    else setSelectedSlice(key);
+  }
+
+  const activeSlice = slices.find((s) => s.key === selectedSlice) ?? null;
+
   // The headline is always the total for what the pills select - the same
   // number the pie centres and the comparison card show. A tapped bar is
   // reported on its own line underneath rather than replacing it: swapping the
@@ -208,9 +231,21 @@ export function SpendExplorer({
         </div>
       </div>
 
+      {period !== "day" && (
+        <PeriodStepper
+          paramKey={period === "week" ? "wo" : "mo"}
+          offset={window.offset}
+          label={window.label}
+          canStepForward={window.canStepForward}
+        />
+      )}
+
       <div className="rounded-3xl border border-[var(--sk-hair)] bg-[var(--sk-surface)] p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <Breadcrumb crumbs={crumbs} onNavigate={(depth) => reset(setPath)(path.slice(0, depth))} />
+          <BackButton
+            crumbs={crumbs}
+            onBack={() => reset(setPath)(path.slice(0, path.length - 1))}
+          />
           <ChartToggle mode={mode} onMode={reset(setMode)} />
         </div>
 
@@ -218,12 +253,19 @@ export function SpendExplorer({
           <Donut
             slices={slices}
             total={total}
-            value={total}
-            label={scopeName}
-            sublabel={crumbs.length > 0 ? window.label : null}
+            value={activeSlice ? activeSlice.amount : total}
+            label={activeSlice ? activeSlice.name : scopeName}
+            sublabel={
+              activeSlice
+                ? `${formatShare(activeSlice.share)} of ${scopeName}`
+                : crumbs.length > 0
+                  ? window.label
+                  : null
+            }
+            hint={activeSlice && !byPayee ? "Tap again to open" : null}
             filtered={hidden.size > 0}
-            drillable={!byPayee}
-            onDrill={drillTo}
+            selectedKey={selectedSlice}
+            onTap={tapSlice}
           />
         ) : (
           <div>
@@ -253,7 +295,7 @@ export function SpendExplorer({
               buckets={bars}
               granularity={granularity}
               currentColor={palette.solid(scopeCategoryId)}
-              comparisonColor={palette.muted(scopeCategoryId)}
+              comparisonColor={COMPARISON_COLOR}
               currentLabel={crumbs.length > 0 ? `${scopeName} · ${window.label}` : window.label}
               comparisonLabel={window.prevLabel}
               selected={activeBar}
@@ -357,48 +399,25 @@ function topLevelOptions(rows: DashRow[], cats: ReturnType<typeof indexCategorie
     });
 }
 
-function Breadcrumb({
-  crumbs,
-  onNavigate,
-}: {
-  crumbs: string[];
-  onNavigate: (depth: number) => void;
-}) {
+/**
+ * Getting back out of a drill-down. A breadcrumb trail was too quiet to find on
+ * a phone - this is a real button, it names where it goes rather than where you
+ * are, and it is present the whole time you are below the top level.
+ */
+function BackButton({ crumbs, onBack }: { crumbs: string[]; onBack: () => void }) {
+  if (crumbs.length === 0) {
+    return <span className="truncate text-[0.9375rem] font-semibold text-[var(--sk-ink)]">All spend</span>;
+  }
+  const parent = crumbs.length === 1 ? "All categories" : crumbs[crumbs.length - 2];
   return (
-    <nav aria-label="Drill-down" className="flex min-w-0 items-center gap-1 text-[0.8125rem]">
-      <button
-        type="button"
-        onClick={() => onNavigate(0)}
-        disabled={crumbs.length === 0}
-        className={
-          crumbs.length === 0
-            ? "shrink-0 font-medium text-[var(--sk-ink-3)]"
-            : "shrink-0 font-medium text-[var(--sk-accent-ink)]"
-        }
-      >
-        All spend
-      </button>
-      {crumbs.map((crumb, i) => (
-        <span key={`${crumb}-${i}`} className="flex min-w-0 items-center gap-1">
-          <span aria-hidden className="shrink-0 text-[var(--sk-ink-3)]">
-            ›
-          </span>
-          <button
-            type="button"
-            onClick={() => onNavigate(i + 1)}
-            disabled={i === crumbs.length - 1}
-            aria-current={i === crumbs.length - 1 ? "page" : undefined}
-            className={`min-w-0 truncate ${
-              i === crumbs.length - 1
-                ? "font-semibold text-[var(--sk-ink)]"
-                : "font-medium text-[var(--sk-accent-ink)]"
-            }`}
-          >
-            {crumb}
-          </button>
-        </span>
-      ))}
-    </nav>
+    <button
+      type="button"
+      onClick={onBack}
+      className="flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--sk-accent-edge)] bg-[var(--sk-accent)] px-3.5 py-2 text-[0.8125rem] font-semibold text-[var(--sk-accent-on)] transition-colors active:brightness-95"
+    >
+      <span aria-hidden className="text-base leading-none">←</span>
+      <span className="truncate">{parent}</span>
+    </button>
   );
 }
 
@@ -568,18 +587,20 @@ function Donut({
   value,
   label,
   sublabel,
+  hint,
   filtered,
-  drillable,
-  onDrill,
+  selectedKey,
+  onTap,
 }: {
   slices: Slice[];
   total: number;
   value: number;
   label: string;
   sublabel: string | null;
+  hint: string | null;
   filtered: boolean;
-  drillable: boolean;
-  onDrill: (key: string) => void;
+  selectedKey: string | null;
+  onTap: (key: string) => void;
 }) {
   let offset = 0;
   const arcs = slices.map((slice) => {
@@ -593,40 +614,76 @@ function Donut({
     <div className="relative mx-auto w-full max-w-[17.5rem]">
       <svg
         viewBox={`0 0 ${SIZE} ${SIZE}`}
-        className="w-full"
+        className="w-full overflow-visible"
         role="img"
         aria-label={`Spend breakdown, ${label}: ${formatInr(value)} total`}
       >
         <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS} fill="none" stroke="var(--sk-plane)" strokeWidth={THICKNESS} />
         {total > 0 &&
-          arcs.map(({ slice, length, offset: start }) => (
-            <circle
-              key={slice.key}
-              cx={SIZE / 2}
-              cy={SIZE / 2}
-              r={RADIUS}
-              fill="none"
-              stroke={slice.color}
-              strokeWidth={THICKNESS}
-              // Never let a real slice vanish into the gap: a hairline still
-              // says "this exists", where 0 would silently drop it.
-              strokeDasharray={`${Math.max(length - GAP, 1)} ${CIRCUMFERENCE}`}
-              strokeDashoffset={-start}
-              transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
-              onClick={() => onDrill(slice.key)}
-              className={drillable || slice.key === ROLLUP ? "cursor-pointer" : undefined}
-            >
-              <title>{`${slice.name}: ${formatInr(slice.amount)} (${formatShare(slice.share)})`}</title>
-            </circle>
-          ))}
+          arcs.map(({ slice, length, offset: start }) => {
+            const isSelected = slice.key === selectedKey;
+            return (
+              <circle
+                key={slice.key}
+                cx={SIZE / 2}
+                cy={SIZE / 2}
+                r={RADIUS}
+                fill="none"
+                stroke={slice.color}
+                // The selected slice grows outward and its neighbours fade -
+                // the same read as a hover state, which is the cue a phone
+                // otherwise has no way to give.
+                strokeWidth={isSelected ? THICKNESS + 10 : THICKNESS}
+                opacity={selectedKey && !isSelected ? 0.4 : 1}
+                strokeDasharray={`${Math.max(length - GAP, 1)} ${CIRCUMFERENCE}`}
+                strokeDashoffset={-start}
+                transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+                onClick={() => onTap(slice.key)}
+                className="cursor-pointer"
+              >
+                <title>{`${slice.name}: ${formatInr(slice.amount)} (${formatShare(slice.share)})`}</title>
+              </circle>
+            );
+          })}
+
+        {/* Share labels sit on the ring itself. Only where the slice is wide
+            enough to hold one - below that the labels collide with each other
+            and with the gaps, and the detail list already carries every value
+            in text. Ink is picked from the fill's luminance, so a label is
+            legible on a pale slice and on a dark one alike. */}
+        {total > 0 &&
+          arcs.map(({ slice, length, offset: start }) => {
+            if (slice.share < 7) return null;
+            const midAngle = ((start + length / 2) / CIRCUMFERENCE) * 360 - 90;
+            const rad = (midAngle * Math.PI) / 180;
+            return (
+              <text
+                key={`${slice.key}-pct`}
+                x={SIZE / 2 + RADIUS * Math.cos(rad)}
+                y={SIZE / 2 + RADIUS * Math.sin(rad)}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={slice.key === selectedKey ? 12 : 11}
+                fontWeight={600}
+                fill={readableInkOn(slice.color)}
+                opacity={selectedKey && slice.key !== selectedKey ? 0.5 : 1}
+                pointerEvents="none"
+              >
+                {Math.round(slice.share)}%
+              </text>
+            );
+          })}
       </svg>
 
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-10 text-center">
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-12 text-center">
         <span className="text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums text-[var(--sk-ink)]">
           {formatInr(value)}
         </span>
         <span className="mt-1.5 line-clamp-2 text-[0.8125rem] text-[var(--sk-ink-3)]">{label}</span>
-        {sublabel && <span className="text-[0.6875rem] text-[var(--sk-ink-3)]">{sublabel}</span>}
+        {sublabel && <span className="mt-0.5 text-[0.6875rem] text-[var(--sk-ink-3)]">{sublabel}</span>}
+        {hint && (
+          <span className="mt-1 text-[0.6875rem] font-medium text-[var(--sk-accent-ink)]">{hint}</span>
+        )}
         {filtered && (
           <span className="mt-0.5 text-[0.6875rem] font-medium text-[var(--sk-accent-ink)]">filtered</span>
         )}

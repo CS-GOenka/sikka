@@ -41,6 +41,9 @@ export interface PeriodWindow {
   prevEndISO: string;
   /** Legend label for the comparison series, e.g. "Yesterday". */
   prevLabel: string;
+  /** Whole periods back; 0 is the live period. Day never steps. */
+  offset: number;
+  canStepForward: boolean;
 }
 
 export interface Bucket {
