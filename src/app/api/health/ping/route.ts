@@ -50,6 +50,7 @@ export async function GET() {
   const row = data as {
     last_phone_heartbeat?: string | null;
     last_capture_check_at?: string | null;
+    phone_heartbeat_ever_armed?: boolean | null;
   } | null;
 
   // Phone heartbeat. "Armed" is reported separately from "stale" on purpose:
@@ -59,8 +60,11 @@ export async function GET() {
   // and no explanation, which is exactly how a real test went unanswered.
   const lastPhone = row?.last_phone_heartbeat ?? null;
   const phoneAgeMinutes = lastPhone ? Math.floor((Date.now() - Date.parse(lastPhone)) / 60000) : null;
+  const phoneEverArmed = row?.phone_heartbeat_ever_armed === true;
   const phoneArmed = lastPhone !== null;
   const phoneStale = phoneAgeMinutes !== null && phoneAgeMinutes > PHONE_HEARTBEAT_GAP_MINUTES;
+  // Armed once, no record now: the monitoring state was lost, not the phone.
+  const phoneAnomaly = lastPhone === null && phoneEverArmed;
 
   // Meta-monitor: the scheduled check is what raises every other alert, so if
   // it stops, no alert can be trusted to arrive - including the ones that
@@ -82,6 +86,8 @@ export async function GET() {
       last: lastPhone,
       ageMinutes: phoneAgeMinutes,
       armed: phoneArmed,
+      everArmed: phoneEverArmed,
+      anomaly: phoneAnomaly,
       stale: phoneStale,
       thresholdMinutes: PHONE_HEARTBEAT_GAP_MINUTES,
     },

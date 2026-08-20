@@ -114,6 +114,40 @@ interface PhoneHeartbeatStatus {
   alerted: boolean;
   throttled?: boolean;
   pushSent?: number;
+  // false only before the very first ping ever recorded.
+  everArmed: boolean;
+  // The heartbeat record vanished after the monitor had been armed - a
+  // different failure from the phone going quiet, and a different fix.
+  anomaly?: boolean;
+}
+
+// Shared send + throttle for both phone alerts, so the anomaly path cannot
+// drift from the staleness path (or forget to throttle and spam every 30
+// minutes during an outage).
+async function firePhoneAlert(
+  lastAlert: string | null,
+  payload: { title: string; body: string }
+): Promise<{ alerted: boolean; throttled?: boolean; pushSent?: number }> {
+  if (lastAlert && Date.now() - Date.parse(lastAlert) < PHONE_ALERT_THROTTLE_HOURS * 60 * 60 * 1000) {
+    return { alerted: false, throttled: true };
+  }
+  try {
+    // Same push fan-out the transaction-silence alert uses - one alerting
+    // mechanism, one set of subscriptions, one service worker path.
+    const result = await sendPushToAll({
+      ...payload,
+      tag: "sikka-phone-heartbeat",
+      url: "/capture-check",
+    });
+    await supabase
+      .from("settings")
+      .upsert({ id: 1, last_phone_heartbeat_alert_at: new Date().toISOString() }, { onConflict: "id" });
+    return { alerted: true, pushSent: result.sent };
+  } catch (err) {
+    // Never let a push failure take down the transaction-silence check.
+    console.error("Phone heartbeat alert failed:", err);
+    return { alerted: false };
+  }
 }
 
 // Independent of the transaction-silence check: a quiet spending day is
@@ -124,47 +158,46 @@ async function checkPhoneHeartbeat(settingsRow: unknown): Promise<PhoneHeartbeat
   const row = settingsRow as {
     last_phone_heartbeat?: string | null;
     last_phone_heartbeat_alert_at?: string | null;
+    phone_heartbeat_ever_armed?: boolean | null;
   } | null;
   const last = row?.last_phone_heartbeat ?? null;
+  const lastAlert = row?.last_phone_heartbeat_alert_at ?? null;
+  const everArmed = row?.phone_heartbeat_ever_armed === true;
 
-  // Never pinged: the automations aren't set up yet (or the migration hasn't
-  // run). Staying silent here is deliberate - arming an alert before the first
-  // ping would fire continuously during setup and train the alert to be
-  // ignored, which is the one thing a monitor must not do. It arms itself the
-  // moment the first heartbeat lands.
   if (!last) {
-    return { lastHeartbeat: null, ageMinutes: null, stale: false, alerted: false };
+    // (a) Never armed: the automations aren't set up yet. Stay silent -
+    // alerting before the first ping would fire continuously during setup and
+    // train the alert to be ignored, which is the one thing a monitor must not
+    // do. It arms itself the moment the first heartbeat lands.
+    if (!everArmed) {
+      return { lastHeartbeat: null, ageMinutes: null, stale: false, alerted: false, everArmed: false };
+    }
+
+    // (b) Armed before, record now gone. Previously indistinguishable from (a)
+    // and therefore silently suppressed - which disarmed the entire alarm and
+    // made a real cancelled-automations test produce nothing at all. The phone
+    // may be fine here; what is broken is the monitoring state itself, so the
+    // wording points at that rather than at the Shortcut.
+    const fired = await firePhoneAlert(lastAlert, {
+      title: "⚠️ Heartbeat monitoring state lost",
+      body: "The phone check-in record was cleared after setup. Capture may be fine, but the missing-ping alarm is disarmed until a ping arrives — check Sikka.",
+    });
+    console.warn("Phone heartbeat: record is null despite having been armed - treating as an anomaly.");
+    return { lastHeartbeat: null, ageMinutes: null, stale: true, anomaly: true, everArmed: true, ...fired };
   }
 
   const ageMinutes = (Date.now() - Date.parse(last)) / 60000;
   const rounded = Math.round(ageMinutes);
   if (ageMinutes <= PHONE_HEARTBEAT_GAP_MINUTES) {
-    return { lastHeartbeat: last, ageMinutes: rounded, stale: false, alerted: false };
+    return { lastHeartbeat: last, ageMinutes: rounded, stale: false, alerted: false, everArmed };
   }
 
-  const lastAlert = row?.last_phone_heartbeat_alert_at ?? null;
-  if (lastAlert && Date.now() - Date.parse(lastAlert) < PHONE_ALERT_THROTTLE_HOURS * 60 * 60 * 1000) {
-    return { lastHeartbeat: last, ageMinutes: rounded, stale: true, alerted: false, throttled: true };
+  const fired = await firePhoneAlert(lastAlert, {
+    title: "⚠️ Phone automations may be down",
+    body: `No check-in from your iPhone Shortcuts in ${rounded}m. The SMS-capture Shortcut has likely stopped — check it.`,
+  });
+  if (fired.alerted) {
+    console.warn(`Phone heartbeat: ${rounded}m since last check-in; alert push sent to ${fired.pushSent} device(s).`);
   }
-
-  try {
-    // Same push fan-out the transaction-silence alert uses - one alerting
-    // mechanism, one set of subscriptions, one service worker path. A distinct
-    // tag so this doesn't collapse into that notification.
-    const result = await sendPushToAll({
-      title: "⚠️ Phone automations may be down",
-      body: `No check-in from your iPhone Shortcuts in ${rounded}m. The SMS-capture Shortcut has likely stopped — check it.`,
-      tag: "sikka-phone-heartbeat",
-      url: "/capture-check",
-    });
-    await supabase
-      .from("settings")
-      .upsert({ id: 1, last_phone_heartbeat_alert_at: new Date().toISOString() }, { onConflict: "id" });
-    console.warn(`Phone heartbeat: ${rounded}m since last check-in; alert push sent to ${result.sent} device(s).`);
-    return { lastHeartbeat: last, ageMinutes: rounded, stale: true, alerted: true, pushSent: result.sent };
-  } catch (err) {
-    // Never let the phone check take down the transaction-silence check.
-    console.error("Phone heartbeat alert failed:", err);
-    return { lastHeartbeat: last, ageMinutes: rounded, stale: true, alerted: false };
-  }
+  return { lastHeartbeat: last, ageMinutes: rounded, stale: true, everArmed, ...fired };
 }

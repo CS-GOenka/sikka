@@ -13,6 +13,7 @@ export function IngestionHealthBanner() {
     captureStale: boolean;
     captureAgeHours: number | null;
     phoneArmed: boolean;
+    phoneAnomaly: boolean;
     phoneStale: boolean;
     phoneAgeMinutes: number | null;
     monitorStale: boolean;
@@ -36,6 +37,7 @@ export function IngestionHealthBanner() {
             // pre-migration database) simply omits these, and the banner must
             // degrade to its previous behaviour rather than crash.
             phoneArmed: j.phoneHeartbeat?.armed !== false,
+            phoneAnomaly: !!j.phoneHeartbeat?.anomaly,
             phoneStale: !!j.phoneHeartbeat?.stale,
             phoneAgeMinutes:
               typeof j.phoneHeartbeat?.ageMinutes === "number" ? j.phoneHeartbeat.ageMinutes : null,
@@ -62,6 +64,7 @@ export function IngestionHealthBanner() {
       health.captureStale ||
       health.phoneStale ||
       health.monitorStale ||
+      health.phoneAnomaly ||
       !health.phoneArmed);
   if (!anything) return null;
 
@@ -81,6 +84,9 @@ export function IngestionHealthBanner() {
       health!.monitorAgeMinutes,
       "a while"
     )} — outage alerts may not reach you.`;
+  } else if (health!.phoneAnomaly) {
+    message =
+      "⚠️ Heartbeat monitoring state was lost — the check-in record was cleared after setup, so the missing-ping alarm is disarmed.";
   } else if (health!.captureStale) {
     const h = health!.captureAgeHours == null ? "8h+" : `${Math.floor(health!.captureAgeHours)}h`;
     message = `⚠️ No transactions captured in ${h} — the SMS pipeline may be down.`;
