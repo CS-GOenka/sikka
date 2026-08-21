@@ -7,7 +7,9 @@ import {
   UNCATEGORISED,
   UNCATEGORISED_LABEL,
   breakdown,
+  deltaTone,
   indexCategories,
+  percentChange,
   rowsInWindow,
   scopeLabel,
   scopeRows,
@@ -33,7 +35,8 @@ import {
 import { PeriodStepper } from "@/components/dashboard/PeriodStepper";
 import { formatInr } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
-import { TimeBars, bucketReadout } from "@/components/dashboard/TimeBars";
+import { TimeBars, bucketReadout, type AxisMode } from "@/components/dashboard/TimeBars";
+import { BucketCompare, type TowerSegment } from "@/components/dashboard/BucketCompare";
 import { TransactionSheet } from "@/components/dashboard/TransactionSheet";
 
 // Past this many named slices the ring stops being readable and the tail goes
@@ -90,6 +93,8 @@ export function SpendExplorer({
   // nothing in between that just answers "how much was that one?".
   const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
   const [openTransaction, setOpenTransaction] = useState<DashRow | null>(null);
+  // A second tap on an already-selected bar opens that slot up.
+  const [zoomedBar, setZoomedBar] = useState<number | null>(null);
 
   const cats = useMemo(() => indexCategories(categories), [categories]);
   // One shared map, built once: the donut, the bars and the detail list all
@@ -105,6 +110,7 @@ export function SpendExplorer({
       setter(value);
       setSelectedBar(null);
       setSelectedSlice(null);
+      setZoomedBar(null);
       setExpanded(false);
     };
   }
@@ -167,6 +173,49 @@ export function SpendExplorer({
     [mode, scoped, prevScoped, window, granularity]
   );
   const activeBar = selectedBar !== null && selectedBar < bars.length ? selectedBar : null;
+  const zoomed = zoomedBar !== null && zoomedBar < bars.length ? bars[zoomedBar] : null;
+
+  const axis: { mode: AxisMode; title: string } =
+    period === "day"
+      ? { mode: "hour", title: "Hour of day" }
+      : period === "week"
+        ? { mode: "weekday", title: "Day of week" }
+        : { mode: "dayOfMonth", title: "Day of month" };
+
+  // The same comparison the cards make, for whatever the screen is scoped to -
+  // reusing percentChange and deltaTone so the sign and the colour rule cannot
+  // drift from the cards above.
+  const prevTotal = useMemo(() => sumAmount(prevScoped), [prevScoped]);
+  const deltaPct = percentChange(total, prevTotal);
+  const tone = deltaTone(deltaPct);
+
+  // The category split behind one slot, for both periods, on whatever drill
+  // level the user is already at - so zooming into a day inside "Food & Dining"
+  // splits by its subcategories rather than jumping back to top-level ones.
+  const zoomSegments: TowerSegment[] = useMemo(() => {
+    if (!zoomed) return [];
+    const step = granularity === "hour" ? 3_600_000 : 86_400_000;
+    // The comparison slot is the same offset into the previous window, which is
+    // how the paired bars line up in the chart this zooms out from.
+    const prevStart =
+      Date.parse(window.prevStartISO) + (zoomed.startMs - Date.parse(window.startISO));
+    const slice = (rows: DashRow[], from: number) =>
+      rows.filter((r) => {
+        const t = Date.parse(r.at);
+        return t >= from && t < from + step;
+      });
+    const cur = breakdown(slice(scoped, zoomed.startMs), path, cats).buckets;
+    const prev = breakdown(slice(prevScoped, prevStart), path, cats).buckets;
+    const prevBy = new Map(prev.map((b) => [b.key, b.amount]));
+    const names = new Map<string, string>();
+    for (const b of [...cur, ...prev]) if (!names.has(b.key)) names.set(b.key, b.name);
+    return [...names.entries()].map(([key, name]) => ({
+      key,
+      name,
+      current: cur.find((b) => b.key === key)?.amount ?? 0,
+      previous: prevBy.get(key) ?? 0,
+    }));
+  }, [zoomed, scoped, prevScoped, window, granularity, path, cats]);
 
   const uncategorised = buckets.find((b) => b.key === UNCATEGORISED)?.amount ?? 0;
   const uncategorisedShare = total > 0 ? (uncategorised / total) * 100 : 0;
@@ -277,16 +326,72 @@ export function SpendExplorer({
             selectedKey={selectedSlice}
             onTap={tapSlice}
           />
+        ) : zoomed ? (
+          <div>
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={() => setZoomedBar(null)}
+                className="flex items-center gap-1.5 rounded-full border border-[var(--sk-accent-edge)] bg-[var(--sk-accent)] px-3.5 py-2 text-[0.8125rem] font-semibold text-[var(--sk-accent-on)] active:brightness-95"
+              >
+                <span aria-hidden className="text-base leading-none">←</span>
+                {window.label}
+              </button>
+            </div>
+            <h3 className="text-[1.0625rem] font-semibold text-[var(--sk-ink)]">
+              {bucketReadout(zoomed, granularity)}
+            </h3>
+            <p className="mb-4 mt-0.5 text-[0.8125rem] text-[var(--sk-ink-3)]">
+              Split by category, same slot in both periods
+            </p>
+            <BucketCompare
+              segments={zoomSegments}
+              currentLabel={window.label}
+              comparisonLabel={window.prevLabel}
+              currentTotal={zoomed.amount}
+              previousTotal={zoomed.prevAmount}
+            />
+          </div>
         ) : (
           <div>
-            <div className="mb-3">
-              <div className="text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums text-[var(--sk-ink)]">
-                {formatInr(total)}
+            <div className="mb-4">
+              {/* The headline in this view is the CHANGE, not the total: the
+                  chart is a comparison of two periods, so the number that
+                  answers it is the difference between them. Both totals stay
+                  underneath, since a percentage with nothing behind it is not
+                  a number anybody can check. */}
+              <div
+                className={`flex items-baseline gap-2 text-[2rem] font-semibold leading-none tracking-tight tabular-nums ${
+                  deltaPct === null
+                    ? "text-[var(--sk-ink-3)]"
+                    : tone === "bad"
+                      ? "text-[var(--sk-bad)]"
+                      : tone === "good"
+                        ? "text-[var(--sk-good)]"
+                        : "text-[var(--sk-warn)]"
+                }`}
+              >
+                <span aria-hidden>
+                  {deltaPct === null ? "" : tone === "bad" ? "↑" : tone === "good" ? "↓" : "→"}
+                </span>
+                <span>{deltaPct === null ? "new" : `${Math.abs(deltaPct)}%`}</span>
+                <span className="text-[0.9375rem] font-medium text-[var(--sk-ink-2)]">
+                  {deltaPct === null
+                    ? `nothing in ${window.prevLabel}`
+                    : tone === "bad"
+                      ? "more"
+                      : tone === "good"
+                        ? "less"
+                        : "level"}
+                </span>
               </div>
-              <div className="mt-1.5 text-[0.8125rem] text-[var(--sk-ink-3)]">
-                {scopeName}
-                {crumbs.length > 0 && ` · ${window.label}`}
-              </div>
+              <p className="mt-2 text-[0.8125rem] tabular-nums text-[var(--sk-ink-2)]">
+                <span className="font-semibold text-[var(--sk-ink)]">{formatInr(total)}</span>
+                <span className="text-[var(--sk-ink-3)]">
+                  {" "}
+                  {scopeName} · vs {formatInr(prevTotal)} {window.prevLabel}
+                </span>
+              </p>
               {selectedBucket && (
                 <div className="mt-2 flex flex-wrap items-baseline gap-x-2 text-[0.8125rem]">
                   <span className="font-semibold text-[var(--sk-ink)]">
@@ -298,23 +403,29 @@ export function SpendExplorer({
                   <span className="tabular-nums text-[var(--sk-ink-3)]">
                     · {window.prevLabel} {formatInr(selectedBucket.prevAmount)}
                   </span>
+                  <span className="font-medium text-[var(--sk-accent-ink)]">Tap again to open</span>
                 </div>
               )}
             </div>
             <TimeBars
               buckets={bars}
               granularity={granularity}
+              axisMode={axis.mode}
+              axisTitle={axis.title}
               currentColor={SERIES_CURRENT}
               comparisonColor={SERIES_COMPARISON}
               currentLabel={crumbs.length > 0 ? `${scopeName} · ${window.label}` : window.label}
               comparisonLabel={window.prevLabel}
               selected={activeBar}
               onSelect={setSelectedBar}
+              onZoom={setZoomedBar}
             />
           </div>
         )}
 
-        {path.length === 0 && (
+        {/* The callout is about the whole period, so it stays out of a view
+            scoped to one category or one slot of it. */}
+        {path.length === 0 && !zoomed && (
           <UncategorisedCallout
             amount={uncategorised}
             share={uncategorisedShare}

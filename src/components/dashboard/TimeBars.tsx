@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { Granularity, TimeBucket } from "@/lib/dashboard";
 import { formatInr, formatInrCompact } from "@/lib/formatInr";
-import { istAxisDay, istDay, istHour, istHourRange } from "@/lib/formatIst";
+import { istAxisDay, istDay, istHour, istHourRange, istWeekday } from "@/lib/formatIst";
 
 // The bars answer "when", where the donut answers "on what" - the same scope, a
 // different question.
@@ -27,24 +27,37 @@ const MIN_BAR_PX = 3; // a spent hour must never be indistinguishable from an em
 const SLOT_WIDTH = 54;
 const Y_TICKS = 4;
 
+/**
+ * How the x-axis names a slot. The period decides this, not the bucket size:
+ * a week and a month are both bucketed by day, but a week reads as weekdays
+ * and a month as dates.
+ */
+export type AxisMode = "hour" | "weekday" | "dayOfMonth";
+
 export function TimeBars({
   buckets,
   granularity,
+  axisMode,
+  axisTitle,
   currentColor,
   comparisonColor,
   currentLabel,
   comparisonLabel,
   selected,
   onSelect,
+  onZoom,
 }: {
   buckets: TimeBucket[];
   granularity: Granularity;
+  axisMode: AxisMode;
+  axisTitle: string;
   currentColor: string;
   comparisonColor: string;
   currentLabel: string;
   comparisonLabel: string;
   selected: number | null;
   onSelect: (index: number | null) => void;
+  onZoom: (index: number) => void;
 }) {
   // One scale for both series. Two y-scales would make the comparison bar a
   // lie - the whole point is that the two heights are directly comparable.
@@ -53,7 +66,7 @@ export function TimeBars({
     [buckets]
   );
   const { max, ticks } = useMemo(() => niceScale(rawMax), [rawMax]);
-  const xTicks = useMemo(() => tickIndices(buckets, granularity), [buckets, granularity]);
+  const xTicks = useMemo(() => tickIndices(buckets, axisMode), [buckets, axisMode]);
 
   if (rawMax <= 0) {
     return (
@@ -116,8 +129,10 @@ export function TimeBars({
                     type="button"
                     // The hit target is the whole slot, not the bar: a quiet day
                     // is a 3px mark that no thumb could hit.
-                    onClick={() => onSelect(isSelected ? null : i)}
-                    aria-label={`${labelFor(bucket.startMs, granularity)}: ${formatInr(bucket.amount)}, ${comparisonLabel} ${formatInr(bucket.prevAmount)}`}
+                    // Same two-stage rule as a pie segment: the first tap
+                    // selects the slot, a second tap on it opens the slot up.
+                    onClick={() => (isSelected ? onZoom(i) : onSelect(i))}
+                    aria-label={`${labelFor(bucket.startMs, granularity)}: ${formatInr(bucket.amount)}, ${comparisonLabel} ${formatInr(bucket.prevAmount)}${isSelected ? " - tap again to open" : ""}`}
                     aria-pressed={isSelected}
                     className="flex h-full shrink-0 flex-col justify-end px-[7px]"
                     style={{ width: SLOT_WIDTH, opacity: selected !== null && !isSelected ? 0.45 : 1 }}
@@ -149,13 +164,17 @@ export function TimeBars({
                   className="shrink-0 whitespace-nowrap text-center text-[0.625rem] tabular-nums text-[var(--sk-ink-3)]"
                   style={{ width: SLOT_WIDTH }}
                 >
-                  {xTicks.has(i) ? tickLabel(bucket.startMs, granularity) : " "}
+                  {xTicks.has(i) ? tickLabel(bucket.startMs, axisMode) : " "}
                 </span>
               ))}
             </div>
           </div>
         </div>
       </div>
+
+      <p className="mt-2 text-center text-[0.6875rem] font-medium uppercase tracking-wide text-[var(--sk-ink-3)]">
+        {axisTitle}
+      </p>
     </div>
   );
 }
@@ -202,8 +221,10 @@ function labelFor(ms: number, granularity: Granularity): string {
   return granularity === "hour" ? istHourRange(ms) : istDay(ms);
 }
 
-function tickLabel(ms: number, granularity: Granularity): string {
-  return granularity === "hour" ? istHour(ms) : istAxisDay(ms);
+function tickLabel(ms: number, mode: AxisMode): string {
+  if (mode === "hour") return istHour(ms);
+  if (mode === "weekday") return istWeekday(ms);
+  return istAxisDay(ms);
 }
 
 /**
@@ -225,8 +246,10 @@ function niceScale(rawMax: number): { max: number; ticks: number[] } {
 // slot reads as a rhythm. The last slot is always pinned - the reader's anchor
 // is "where does this end", and an axis that stops at 19-Aug when the last bar
 // is 21-Aug is worse than no axis.
-function tickIndices(buckets: TimeBucket[], granularity: Granularity): Set<number> {
-  const stride = granularity === "hour" ? 3 : buckets.length > 10 ? 2 : 1;
+function tickIndices(buckets: TimeBucket[], mode: AxisMode): Set<number> {
+  // A week is seven slots and every weekday earns a label; hours and month
+  // dates are too many to name individually at phone width.
+  const stride = mode === "weekday" ? 1 : mode === "hour" ? 3 : buckets.length > 10 ? 2 : 1;
   const indices = new Set<number>();
   for (let i = 0; i < buckets.length; i += stride) indices.add(i);
   const last = buckets.length - 1;

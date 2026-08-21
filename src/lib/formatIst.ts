@@ -17,6 +17,7 @@ const DATE_TIME = fmt({ day: "2-digit", month: "short", hour: "numeric", minute:
 const HOUR = fmt({ hour: "numeric" });
 const DAY_MONTH = fmt({ day: "numeric", month: "short" });
 const MONTH_YEAR = fmt({ month: "long", year: "numeric" });
+const WEEKDAY = fmt({ weekday: "short" });
 const AXIS_DAY = fmt({ day: "2-digit", month: "short" });
 
 /** "Thu 20 Aug" - the readout above a daily bar. */
@@ -54,9 +55,15 @@ export function istMonthYear(ms: number): string {
   return MONTH_YEAR.format(ms);
 }
 
+
+/** "Mon" - a tick under a bar when the period is a week. */
+export function istWeekday(ms: number): string {
+  return WEEKDAY.format(ms);
+}
+
 /**
- * "19-Aug" - a tick under a daily bar. Hyphenated and always two digits so the
- * ticks are the same width and read as one column of dates rather than as prose.
+ * "19-Aug" - a tick under a bar when the period is a month. Hyphenated and
+ * always two digits so the ticks are one column of dates rather than prose.
  */
 export function istAxisDay(ms: number): string {
   return AXIS_DAY.format(ms).replace(/\s+/, "-");
