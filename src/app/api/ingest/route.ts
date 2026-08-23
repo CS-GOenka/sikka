@@ -11,6 +11,7 @@ import {
 } from "@/lib/ccBillPaymentResolution";
 import { notifyBudgetForSpend } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
+import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
 import { sendPushToAll } from "@/lib/push";
 import { startTiming } from "@/lib/timing";
 
@@ -28,39 +29,6 @@ async function fireCcPaymentSuccessPush(amount: number | null): Promise<void> {
   } catch (err) {
     console.error("CC payment success push failed:", err);
   }
-}
-
-// Receipt time for a sender that didn't supply one (the Share Sheet shortcut).
-//
-// Same-day SMS  -> now. Accurate, and the only value that lets the row show up
-//                  in /capture-check's rolling 1h/6h windows.
-// Older SMS     -> 12:00 IST on the date parsed from the text. Backdated
-//                  capture is the Share Sheet's whole purpose, so "now" would
-//                  file a two-day-old spend under today's budget. Midday sits
-//                  safely inside a budget day whatever the reset hour, unlike
-//                  midnight, which a 03:00 reset would push into the day before.
-// No date       -> now, as the only thing left.
-const IST_OFFSET_MS = 330 * 60 * 1000;
-
-function fallbackReceivedAt(transactionDate: string | null, nowMs: number = Date.now()): string {
-  const m = transactionDate ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(transactionDate) : null;
-  if (m) {
-    // Is the SMS dated today, on the IST clock the rest of the app uses?
-    const istNow = new Date(nowMs + IST_OFFSET_MS);
-    const sameDay =
-      istNow.getUTCFullYear() === +m[1] &&
-      istNow.getUTCMonth() === +m[2] - 1 &&
-      istNow.getUTCDate() === +m[3];
-    // Same-day capture: "now" is both accurate (you share it when you see it)
-    // and the only value that puts the row in /capture-check's rolling 1h/6h
-    // windows - the whole point of that screen is confirming a capture just
-    // landed, so a midday anchor would hide it there.
-    if (sameDay) return new Date(nowMs).toISOString();
-    const istNoonMs = Date.UTC(+m[1], +m[2] - 1, +m[3], 12, 0, 0, 0) - IST_OFFSET_MS;
-    // Never invent a future receipt time (a mis-parsed or post-dated SMS).
-    if (istNoonMs <= nowMs) return new Date(istNoonMs).toISOString();
-  }
-  return new Date(nowMs).toISOString();
 }
 
 export const maxDuration = 60;
@@ -88,6 +56,9 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
 
   const message = (body as { message?: unknown })?.message;
   const rawPhoneReceivedAt = (body as { phoneReceivedAt?: unknown })?.phoneReceivedAt;
+  // Whether this is a hand-shared message rather than a live SMS alert. The two
+  // post identical shapes, so only the sender can say - see receivedAt.ts.
+  const manualCapture = isManualCapture((body as { source?: unknown })?.source);
   // Two senders use two shapes: the reconcile script sends UTC ISO-8601, the
   // iOS Shortcut sends an IST human string ("26 Jul 2026 at 12:37 AM").
   // Normalize both to one canonical UTC ISO-8601 string so phone_received_at
@@ -152,20 +123,26 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // the receipt-time fallback below uses the date it parses out of the SMS.
   const classified = classify(message);
 
-  // A sender that omits phoneReceivedAt entirely - notably the "Send to Sikka"
-  // Share Sheet shortcut, which posts only { message } - used to store null
-  // here. That looked harmless because classification and categorization ran
-  // normally, but phone_received_at is the anchor for every spend query:
-  // computeTodaySpend and /capture-check both filter a range over it with an
-  // !inner join, and notifyBudgetForSpend bails on a missing value. A null
-  // therefore made a correctly-classified transaction silently invisible in
-  // budget totals, in Capture Check, and to budget alerts - a manual capture
-  // that looked captured but did not count.
+  // Which instant this transaction is filed under. Two things are decided here,
+  // both of which have bitten this app before:
   //
-  // So fall back rather than storing null. The display layer already treats
-  // created_at as an acceptable proxy for receipt time (see formatReceived);
-  // this makes the spend layer agree instead of dropping the row.
-  const effectivePhoneReceivedAt = phoneReceivedAt ?? fallbackReceivedAt(classified.transactionDate);
+  //  - A sender that omits phoneReceivedAt (the Share Sheet, before it sent
+  //    one) must not store null. phone_received_at anchors every spend query,
+  //    and a null made a correctly-classified transaction silently invisible in
+  //    budget totals, in Capture Check, and to budget alerts.
+  //
+  //  - A MANUAL capture that does send one must not let it override the date in
+  //    the message. The Share Sheet's timestamp is when the message was shared;
+  //    a backdated capture is the entire point of that Shortcut, so sharing a
+  //    two-day-old SMS would otherwise file that spend under today.
+  //
+  // The automatic path is deliberately untouched: there phoneReceivedAt is the
+  // transaction time and always wins.
+  const effectivePhoneReceivedAt = resolveReceivedAt(
+    phoneReceivedAt,
+    classified.transactionDate,
+    manualCapture
+  );
 
   let rawMessageId: number;
   if (existing) {
