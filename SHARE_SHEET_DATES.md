@@ -121,15 +121,10 @@ Budget-day spend after correction:
 
 ## Open points
 
-### 1. The Shortcut still needs one edit — the fix is inert until then
+### 1. ~~The Shortcut needs one edit~~ — done
 
-New Share-Sheet captures will **still** be stamped with the share time until the
-Shortcut identifies itself. Either:
-
-- **add** `source` = `manual` to the dictionary the Shortcut posts, alongside
-  `message` — preferred, it is explicit; or
-- **remove** "Current Date" from that Shortcut — the fallback already handles the
-  absent case correctly.
+`source` = `manual` was added to the Send-to-Sikka Shortcut, and the fix is
+deployed, so backdated shares now date by the message text.
 
 ### 2. Fourteen credit rows left untouched, deliberately
 
@@ -138,19 +133,45 @@ correctly as stored. They are credits, so they do not affect spend in any case.
 Listed in the scan if you want to revisit — but changing them would replace
 correct receipt times with worse ones.
 
-### 3. Not merged or deployed
+### 3. ~~Not merged or deployed~~ — done
 
-Branch `sharesheet-date-precedence` is pushed but `main` is still at `363c0f9`.
-The data corrections are already live in the database, so production currently
-runs the old precedence rule against corrected rows — which is stable, just not
-yet protected against the next backdated share.
+Merged to `main` and deployed.
 
-### 4. Worth considering later
+### 4. Duplicate captures — added after the fact
+
+Re-sharing an already-captured SMS used to create a second transaction. The
+exact-text dedup only caught a byte-identical re-send, and two captures of the
+same message are not always byte-identical: transactions **5008 and 5011**, both
+₹16,748 on 19-Aug, differ only in that one copy kept the trailing
+EMI-conversion URL and the other truncated it. That pair is still in the data,
+worked around by hand (one is filed under `Ignore`).
+
+`src/lib/duplicateCheck.ts` now recognises a re-capture on two keys:
+
+- **the bank reference** (`UPI:659827785171`, `UPI-660093033295-NAME`, …), for
+  every sender. Type and amount must agree too, because a refund SMS quotes the
+  reference of the debit it reverses — matching on reference alone would swallow
+  legitimate reversals.
+- **amount + date + card + payee**, for manual captures only. Two in five
+  transaction SMS carry no reference at all (card-swipe alerts), so without this
+  a re-share of one would still double up. Confined to manual captures because
+  buying the same coffee twice in a day is real, and the automatic path must not
+  drop the second one.
+
+Known limit: a message mangled badly enough that `classify()` cannot read an
+amount or a date has no fingerprint, so a ref-less re-share of one would still
+store. It lands as `needs_review` with a null amount rather than as spend, so it
+shows up in the review queue instead of corrupting a total.
+
+### 5. Worth considering later
 
 - **`/capture-check` blind spot.** It ranges over `phone_received_at` on rolling
   1h/6h windows, so a corrected backdated capture drops out of it immediately.
   That is intended, but it means a manual capture cannot be confirmed there.
-- **No automated test suite.** `receivedAt.ts` was verified by compiling and
-  running it directly; there is no `npm test` to keep that honest as the code
-  moves. This is the second dating bug in this area, so a permanent test would
-  earn its keep.
+- **No automated test suite.** `receivedAt.ts` and `duplicateCheck.ts` were
+  verified by running them against the real endpoint and then deleting the test
+  rows; there is no `npm test` to keep that honest as the code moves. This is
+  the second dating bug in this area, so a permanent test would earn its keep.
+- **The 5008 / 5011 pair is still there.** The new check stops the next one; it
+  does not clean up the old one. Deleting the row filed under `Ignore` would
+  tidy it, but it changes nothing in any total.

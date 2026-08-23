@@ -12,6 +12,7 @@ import {
 import { notifyBudgetForSpend } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
+import { findExistingCapture } from "@/lib/duplicateCheck";
 import { sendPushToAll } from "@/lib/push";
 import { startTiming } from "@/lib/timing";
 
@@ -122,6 +123,31 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // manual trigger required. It runs before the raw_messages insert because
   // the receipt-time fallback below uses the date it parses out of the SMS.
   const classified = classify(message);
+
+  // Already captured? The exact-text check above only catches a byte-identical
+  // re-send. This catches the same transaction arriving as different text -
+  // notably an SMS the automation already ingested, then shared by hand. Runs
+  // after classify() because both of its keys come from the parsed fields, and
+  // before the raw_messages insert so a duplicate leaves nothing behind.
+  const duplicate = await findExistingCapture({
+    message,
+    manualCapture,
+    type: classified.type,
+    amount: classified.amount,
+    transactionDate: classified.transactionDate,
+    cardOrAccount: classified.cardOrAccount,
+    payee: classified.payee,
+  });
+  if (duplicate) {
+    console.log(
+      `Ignoring already-captured message; matches transaction ${duplicate.transactionId} on ${duplicate.reason}`
+    );
+    return NextResponse.json({
+      status: "OK",
+      duplicate: true,
+      transactionId: duplicate.transactionId,
+    });
+  }
 
   // Which instant this transaction is filed under. Two things are decided here,
   // both of which have bitten this app before:
