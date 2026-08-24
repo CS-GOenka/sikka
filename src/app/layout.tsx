@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { RegisterServiceWorker } from "./register-sw";
 import { ProfileMenu } from "@/components/ProfileMenu";
+import { SikkaLogo } from "@/components/SikkaLogo";
 import { IngestionHealthBanner } from "@/components/IngestionHealthBanner";
 
 const geistSans = Geist({
@@ -25,11 +26,16 @@ export const metadata: Metadata = {
     title: "Sikka",
   },
   icons: {
+    // The SVG first so a browser that supports it gets the sharp one at any
+    // size; the PNGs remain for those that don't.
     icon: [
+      { url: "/icons/sikka-icon.svg", type: "image/svg+xml" },
       { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
       { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
-    apple: "/icons/apple-touch-icon.png",
+    // iOS ignores SVG here and composites any transparency onto black, so this
+    // one file is deliberately opaque - see public/icons/apple-touch-icon.png.
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 
@@ -56,7 +62,8 @@ export default function RootLayout({
             reached from the menu it opens, leaving the dashboard as the
             default view. It lives in the layout so it is present on those
             screens too, not just here. */}
-        <header className="flex justify-end px-4 pt-4">
+        <header className="flex items-center justify-between px-4 pt-4">
+          <SikkaLogo />
           <ProfileMenu />
         </header>
         {children}

@@ -1,0 +1,11 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sikka logo">
+  <title>Sikka</title>
+  <circle cx="256" cy="256" r="240" fill="#E5B93C"/>
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#8a6a1e" stroke-width="6" stroke-dasharray="6 20" stroke-linecap="round"/>
+  <g fill="none" stroke="#5c4410" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="198" y1="152" x2="314" y2="152"/>
+    <line x1="198" y1="206" x2="314" y2="206"/>
+    <path d="M 198 260 L 268 260 C 312 260 312 152 268 152"/>
+    <path d="M 214 260 L 306 372"/>
+  </g>
+</svg>
