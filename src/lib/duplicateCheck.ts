@@ -8,7 +8,6 @@
 // that one copy kept the trailing EMI-conversion URL and the other truncated
 // it. No amount of text matching would have caught that; the bank's own
 // reference number in both copies is identical.
-import { supabase } from "@/lib/supabase";
 
 // The bank's transaction reference: "UPI:659827785171", "UPI-660093033295-NAME",
 // "UPI Ref. no. 123456789", "IMPS ref 987654321". Nine digits or more, which is
@@ -27,9 +26,29 @@ export interface DuplicateMatch {
   reason: string;
 }
 
-interface CandidateRow {
+/** A stored transaction that quotes the same reference as the incoming message. */
+export interface CandidateTransaction {
   id: number;
-  transactions: { id: number; type: string; amount: number | null } | null;
+  type: string;
+  amount: number | null;
+}
+
+export interface FingerprintInput {
+  type: string;
+  amount: number;
+  transactionDate: string;
+  cardOrAccount: string | null;
+  payee: string | null;
+}
+
+/**
+ * The two database lookups this module needs. Passed in rather than imported so
+ * the decision logic can be tested without a database - the part worth testing
+ * is which candidate counts as a duplicate, not how the rows were fetched.
+ */
+export interface DuplicateLookups {
+  byReference(reference: string): Promise<CandidateTransaction[]>;
+  byFingerprint(input: FingerprintInput): Promise<number | null>;
 }
 
 /**
@@ -54,35 +73,32 @@ interface CandidateRow {
  *    drop the second one. A hand-share of a genuine repeat is both rarer and
  *    recoverable, where a silently doubled spend total is neither.
  */
-export async function findExistingCapture(input: {
-  message: string;
-  manualCapture: boolean;
-  type: string;
-  amount: number | null;
-  transactionDate: string | null;
-  cardOrAccount: string | null;
-  payee: string | null;
-}): Promise<DuplicateMatch | null> {
+export async function findExistingCapture(
+  input: {
+    message: string;
+    manualCapture: boolean;
+    type: string;
+    amount: number | null;
+    transactionDate: string | null;
+    cardOrAccount: string | null;
+    payee: string | null;
+  },
+  lookups: DuplicateLookups
+): Promise<DuplicateMatch | null> {
   const reference = extractReference(input.message);
   if (reference) {
-    const { data, error } = await supabase
-      .from("raw_messages")
-      .select("id, transactions(id, type, amount)")
-      .ilike("message", `%${reference}%`)
-      .limit(20)
-      .returns<CandidateRow[]>();
-    if (error) {
+    let candidates: CandidateTransaction[] = [];
+    try {
+      candidates = await lookups.byReference(reference);
+    } catch (err) {
       // A failed lookup must not block ingest: losing a message is worse than
       // storing a duplicate, which is visible and can be deleted.
-      console.error("Duplicate check by reference failed:", error);
-    } else {
-      for (const row of data ?? []) {
-        const txn = row.transactions;
-        if (!txn) continue;
-        if (txn.type !== input.type) continue; // a reversal quotes the original's reference
-        if (txn.amount !== input.amount) continue;
-        return { transactionId: txn.id, reason: `reference ${reference}` };
-      }
+      console.error("Duplicate check by reference failed:", err);
+    }
+    for (const candidate of candidates) {
+      if (candidate.type !== input.type) continue; // a reversal quotes the original's reference
+      if (candidate.amount !== input.amount) continue;
+      return { transactionId: candidate.id, reason: `reference ${reference}` };
     }
   }
 
@@ -91,25 +107,22 @@ export async function findExistingCapture(input: {
   // the very least, or this would match half the table.
   if (input.amount === null || !input.transactionDate) return null;
 
-  let query = supabase
-    .from("transactions")
-    .select("id")
-    .eq("type", input.type)
-    .eq("amount", input.amount)
-    .eq("transaction_date", input.transactionDate);
-  // Null-safe: a null card must match a null card, not "any card".
-  query = input.cardOrAccount ? query.eq("card_or_account", input.cardOrAccount) : query.is("card_or_account", null);
-  query = input.payee ? query.eq("payee", input.payee) : query.is("payee", null);
-
-  const { data, error } = await query.limit(1).returns<{ id: number }[]>();
-  if (error) {
-    console.error("Duplicate check by fingerprint failed:", error);
+  let transactionId: number | null = null;
+  try {
+    transactionId = await lookups.byFingerprint({
+      type: input.type,
+      amount: input.amount,
+      transactionDate: input.transactionDate,
+      cardOrAccount: input.cardOrAccount,
+      payee: input.payee,
+    });
+  } catch (err) {
+    console.error("Duplicate check by fingerprint failed:", err);
     return null;
   }
-  const hit = data?.[0];
-  if (!hit) return null;
+  if (transactionId === null) return null;
   return {
-    transactionId: hit.id,
+    transactionId,
     reason: `same amount, date, card and payee (${input.amount} on ${input.transactionDate})`,
   };
 }

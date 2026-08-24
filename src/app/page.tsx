@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { getAssignableCategories } from "@/lib/gemini";
 import { fetchQualifyingSpendRows, getBudgetSettings } from "@/lib/budget";
 import { clampOffset, dashboardFetchWindows, periodComparisons } from "@/lib/periods";
 import {
@@ -48,12 +49,17 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
   // One query per contiguous span the screen needs, rather than one per window:
   // at rest the six windows overlap into a single span, and they only separate
   // when the stepper has walked a period away from today.
-  const [windowRows, { data: categoryRows, error: categoryError }] = await Promise.all([
-    Promise.all(dashboardFetchWindows(periods).map(fetchQualifyingSpendRows)),
-    supabase.from("categories").select("id, name, parent_id").returns<
-      { id: number; name: string; parent_id: number | null }[]
-    >(),
-  ]);
+  // Two category shapes are needed and they are genuinely different: the whole
+  // tree (parents included) drives the colour map, while the picker offers only
+  // assignable leaves - the same list /review and /transactions use.
+  const [windowRows, { data: categoryRows, error: categoryError }, assignableCategories] =
+    await Promise.all([
+      Promise.all(dashboardFetchWindows(periods).map(fetchQualifyingSpendRows)),
+      supabase.from("categories").select("id, name, parent_id").returns<
+        { id: number; name: string; parent_id: number | null }[]
+      >(),
+      getAssignableCategories(),
+    ]);
   // Merged windows can still abut, and a row could in principle be returned by
   // two of them, so the rows are keyed by id before anything sums them.
   const spendRows = [...new Map(windowRows.flat().map((r) => [r.id, r])).values()];
@@ -126,7 +132,12 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
       <h1 className="sr-only">Sikka spending dashboard</h1>
       <RefreshOnVisible />
       <ComparisonCards cards={cards} />
-      <SpendExplorer rows={rows} categories={categories} periods={periodWindows} />
+      <SpendExplorer
+        rows={rows}
+        categories={categories}
+        assignableCategories={assignableCategories}
+        periods={periodWindows}
+      />
     </main>
   );
 }

@@ -24,7 +24,11 @@ const MIN_BAR_PX = 3; // a spent hour must never be indistinguishable from an em
 // A fixed slot width rather than a share of the container: at a month's 21
 // slots, dividing the width up gives 15px per slot and every label collides.
 // Fixed slots keep the bars airy and let the chart scroll instead.
-const SLOT_WIDTH = 54;
+//
+// Wide enough for BOTH bars to carry their own value: two labels of the
+// "₹29.7k" shape need roughly 34px each, and a label that does not fit over its
+// own bar cannot be read as belonging to it.
+const SLOT_WIDTH = 78;
 const Y_TICKS = 4;
 
 /**
@@ -137,17 +141,23 @@ export function TimeBars({
                     className="flex h-full shrink-0 flex-col justify-end px-[7px]"
                     style={{ width: SLOT_WIDTH, opacity: selected !== null && !isSelected ? 0.45 : 1 }}
                   >
-                    <span className="mb-1 block whitespace-nowrap text-center text-[0.5625rem] font-semibold tabular-nums text-[var(--sk-ink-2)]">
-                      {bucket.amount > 0 ? formatInrCompact(bucket.amount) : " "}
-                    </span>
+                    {/* Each bar carries its own value, directly above itself -
+                        position is what ties a label to its series, so both stay
+                        in text ink rather than taking the series colour. The
+                        comparison reads one step back to keep the selected
+                        period dominant. */}
                     <span className="flex w-full items-end justify-center gap-[3px]">
-                      <span
-                        className="w-1/2 rounded-t-[3px]"
-                        style={{ height: height(bucket.amount), background: currentColor }}
+                      <BarColumn
+                        value={bucket.amount}
+                        height={height(bucket.amount)}
+                        color={currentColor}
+                        labelClass="text-[var(--sk-ink-2)] font-semibold"
                       />
-                      <span
-                        className="w-1/2 rounded-t-[3px]"
-                        style={{ height: height(bucket.prevAmount), background: comparisonColor }}
+                      <BarColumn
+                        value={bucket.prevAmount}
+                        height={height(bucket.prevAmount)}
+                        color={comparisonColor}
+                        labelClass="text-[var(--sk-ink-3)]"
                       />
                     </span>
                   </button>
@@ -176,6 +186,30 @@ export function TimeBars({
         {axisTitle}
       </p>
     </div>
+  );
+}
+
+function BarColumn({
+  value,
+  height,
+  color,
+  labelClass,
+}: {
+  value: number;
+  height: number;
+  color: string;
+  labelClass: string;
+}) {
+  return (
+    <span className="flex h-full min-w-0 flex-1 flex-col justify-end">
+      <span
+        className={`mb-0.5 block whitespace-nowrap text-center text-[0.5625rem] tabular-nums ${labelClass}`}
+        style={{ height: LABEL_ROW }}
+      >
+        {value > 0 ? formatInrCompact(value) : ""}
+      </span>
+      <span className="w-full rounded-t-[3px]" style={{ height, background: color }} />
+    </span>
   );
 }
 

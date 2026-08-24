@@ -11,6 +11,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Tests run on node --test, which strips types and therefore needs the real
+    // file extension on relative imports. Safe here because noEmit is set.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [

@@ -168,10 +168,14 @@ shows up in the review queue instead of corrupting a total.
 - **`/capture-check` blind spot.** It ranges over `phone_received_at` on rolling
   1h/6h windows, so a corrected backdated capture drops out of it immediately.
   That is intended, but it means a manual capture cannot be confirmed there.
-- **No automated test suite.** `receivedAt.ts` and `duplicateCheck.ts` were
-  verified by running them against the real endpoint and then deleting the test
-  rows; there is no `npm test` to keep that honest as the code moves. This is
-  the second dating bug in this area, so a permanent test would earn its keep.
+- ~~**No automated test suite.**~~ Done. `npm test` runs 34 cases over
+  `receivedAt.ts` and `duplicateCheck.ts` on `node --test` (no new
+  dependencies - Node 24 strips types itself). Every fixture is a real message
+  from this account, and both regressions are pinned: the backdated share, and
+  the late refund that must NOT be treated as misdated. Verified by mutation:
+  reintroducing the `??` precedence bug fails 2 tests, dropping the reversal
+  type-check fails 1, and letting the fingerprint run on the automatic path
+  fails 1.
 - **The 5008 / 5011 pair is still there.** The new check stops the next one; it
   does not clean up the old one. Deleting the row filed under `Ignore` would
   tidy it, but it changes nothing in any total.

@@ -13,6 +13,7 @@ import { notifyBudgetForSpend } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
 import { findExistingCapture } from "@/lib/duplicateCheck";
+import { supabaseDuplicateLookups } from "@/lib/duplicateLookups";
 import { sendPushToAll } from "@/lib/push";
 import { startTiming } from "@/lib/timing";
 
@@ -137,7 +138,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     transactionDate: classified.transactionDate,
     cardOrAccount: classified.cardOrAccount,
     payee: classified.payee,
-  });
+  }, supabaseDuplicateLookups);
   if (duplicate) {
     console.log(
       `Ignoring already-captured message; matches transaction ${duplicate.transactionId} on ${duplicate.reason}`

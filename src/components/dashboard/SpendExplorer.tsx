@@ -23,6 +23,7 @@ import {
   type PeriodWindow,
 } from "@/lib/dashboard";
 import type { PeriodKey } from "@/lib/periods";
+import type { CategoryOption } from "@/lib/gemini";
 import {
   ROLLUP_COLOR,
   SERIES_COMPARISON,
@@ -75,10 +76,13 @@ function formatShare(share: number): string {
 export function SpendExplorer({
   rows,
   categories,
+  assignableCategories,
   periods,
 }: {
   rows: DashRow[];
   categories: CategoryNode[];
+  /** Leaf categories the picker can assign - the same list /review offers. */
+  assignableCategories: CategoryOption[];
   periods: PeriodWindow[];
 }) {
   const [period, setPeriod] = useState<PeriodKey>("day");
@@ -455,6 +459,7 @@ export function SpendExplorer({
               ? UNCATEGORISED_LABEL
               : cats.name(openTransaction.categoryId)
           }
+          categories={assignableCategories}
           onClose={() => setOpenTransaction(null)}
         />
       )}

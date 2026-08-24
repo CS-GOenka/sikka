@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { CategoryOption } from "@/lib/gemini";
+import { setTransactionCategory } from "@/lib/setCategory";
 
 // Shared by /transactions and /review - both use this exact component and
 // the same /api/categorize/review endpoint, so there is only ever one code
@@ -45,15 +46,7 @@ export function CategoryPicker({
     setPending(true);
     setError(null);
     try {
-      const res = await fetch("/api/categorize/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactionId, category }),
-      });
-      const json = await res.json();
-      if (!res.ok || json.status !== "OK") {
-        throw new Error(json.error ?? "Failed to save category");
-      }
+      await setTransactionCategory(transactionId, category);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save category");
