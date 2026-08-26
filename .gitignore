@@ -44,3 +44,7 @@ scripts/__pycache__/
 
 # Supabase CLI scratch
 supabase/.temp/
+
+# Throwaway diagnostic scripts run from the repo root (they need node_modules
+# and .env.local, so they cannot live in a temp directory).
+*.tmp.mjs
