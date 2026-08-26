@@ -5,6 +5,8 @@ import { RefreshOnVisible } from "@/components/RefreshOnVisible";
 import { TransactionRow, type RowData } from "@/components/TransactionRow";
 import { TransactionFilters, type FilterOption } from "@/components/TransactionFilters";
 import { GroupSelectionProvider, type SelectableTransaction } from "@/components/GroupSelectionProvider";
+import { RejectedCaptureCallout } from "@/components/RejectedCaptureCallout";
+import { fetchPendingRejections } from "@/lib/rejectedCaptures";
 import { formatReceived, formatReceivedShort } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 import {
@@ -182,10 +184,15 @@ async function renderTransactionsPage(
     getAssignableCategories(),
   ]);
 
+  // Fetched before the error branch, which also renders the callout.
+  const rejections = await fetchPendingRejections();
+
   if (error) {
     return (
       <main className="p-4">
         <h1 className="text-xl font-semibold">Transactions</h1>
+
+      <RejectedCaptureCallout rejections={rejections} />
         <p className="mt-4 text-red-600">Failed to load transactions: {error.message}</p>
       </main>
     );
@@ -253,6 +260,8 @@ async function renderTransactionsPage(
       <RefreshOnVisible />
       <h1 className="text-xl font-semibold">Transactions</h1>
 
+      <RejectedCaptureCallout rejections={rejections} />
+
       <TransactionFilters
         initial={filters}
         sort={sort}
@@ -265,7 +274,7 @@ async function renderTransactionsPage(
         resultCount={total}
       />
 
-      <GroupSelectionProvider transactions={selectable}>
+      <GroupSelectionProvider transactions={selectable} categories={categories}>
 
       {/* table-fixed + explicit widths + truncation is what guarantees the four
           columns fit a phone screen; without it a long payee widens the table

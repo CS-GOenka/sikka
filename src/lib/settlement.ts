@@ -33,6 +33,13 @@ export interface SettlementGroup {
   name: string;
   status: GroupStatus;
   createdAt: string;
+  /**
+   * The parent's own category, which is what the pie and every analytic see
+   * for this group's spend. A group's daughters can be filed anywhere - a night
+   * out is part Food, part Indulgence - so inheriting one of them would make
+   * the breakdown depend on which happened to be largest.
+   */
+  categoryId: number | null;
   transactions: GroupTransaction[];
   lines: SettlementLine[];
 }
@@ -118,11 +125,14 @@ export function groupAnchor(group: SettlementGroup): string | null {
 }
 
 /**
- * Which category the net is filed under: the one carrying the largest debit.
- * A dinner group whose big debit was Dining shows its net under Dining, which
- * is what makes the category breakdown still mean something.
+ * Which category the net is filed under.
+ *
+ * The group's own category when it has one. Falling back to the largest debit's
+ * category only covers groups made before parents had a category of their own,
+ * and groups where none was chosen - it is a default, not the rule.
  */
 export function groupCategory(group: SettlementGroup): number | null {
+  if (group.categoryId != null) return group.categoryId;
   let best: { categoryId: number | null; amount: number } | null = null;
   for (const t of group.transactions) {
     if (!countsInGroup(t) || t.type !== "debit") continue;

@@ -15,6 +15,7 @@ import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
 import { findExistingCapture } from "@/lib/duplicateCheck";
 import { supabaseDuplicateLookups } from "@/lib/duplicateLookups";
 import { convertTransaction, isConvertibleForeignCard } from "@/lib/fx";
+import { recordRejectedCapture } from "@/lib/rejectedCaptures";
 import { sendPushToAll } from "@/lib/push";
 import { startTiming } from "@/lib/timing";
 
@@ -62,6 +63,11 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // Whether this is a hand-shared message rather than a live SMS alert. The two
   // post identical shapes, so only the sender can say - see receivedAt.ts.
   const manualCapture = isManualCapture((body as { source?: unknown })?.source);
+  // Set only by the "capture as separate" answer to a refused share. The user
+  // has looked at the transaction and said it is genuinely distinct, which is
+  // better evidence than any heuristic here - so every duplicate check is
+  // skipped rather than being asked again and giving the same answer.
+  const forceCapture = (body as { force?: unknown })?.force === true;
   // Two senders use two shapes: the reconcile script sends UTC ISO-8601, the
   // iOS Shortcut sends an IST human string ("26 Jul 2026 at 12:37 AM").
   // Normalize both to one canonical UTC ISO-8601 string so phone_received_at
@@ -116,7 +122,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   const existing = existingRows?.[0];
   // transactions.raw_message_id is unique, so PostgREST embeds this as a
   // single object (or null), not an array.
-  if (existing && existing.transactions) {
+  if (existing && existing.transactions && !forceCapture) {
     return NextResponse.json({ status: "OK" });
   }
 
@@ -131,7 +137,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // notably an SMS the automation already ingested, then shared by hand. Runs
   // after classify() because both of its keys come from the parsed fields, and
   // before the raw_messages insert so a duplicate leaves nothing behind.
-  const duplicate = await findExistingCapture({
+  const duplicate = forceCapture ? null : await findExistingCapture({
     message,
     manualCapture,
     type: classified.type,
@@ -144,6 +150,20 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     console.log(
       `Ignoring already-captured message; matches transaction ${duplicate.transactionId} on ${duplicate.reason}`
     );
+    // A hand-shared message that gets refused must never disappear quietly.
+    // Only manual captures are recorded: the automatic path re-delivers the
+    // same SMS routinely, and a callout for each would be noise about
+    // something nobody did.
+    if (manualCapture) {
+      await recordRejectedCapture({
+        message,
+        amount: classified.amount,
+        payee: classified.payee,
+        transactionDate: classified.transactionDate,
+        matchedTransactionId: duplicate.transactionId,
+        reason: duplicate.reason,
+      });
+    }
     return NextResponse.json({
       status: "OK",
       duplicate: true,
@@ -173,7 +193,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   );
 
   let rawMessageId: number;
-  if (existing) {
+  if (existing && !forceCapture) {
     rawMessageId = existing.id;
   } else {
     try {

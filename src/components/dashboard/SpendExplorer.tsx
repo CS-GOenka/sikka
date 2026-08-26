@@ -294,14 +294,14 @@ export function SpendExplorer({
         </div>
       </div>
 
-      {period !== "day" && (
-        <PeriodStepper
-          paramKey={period === "week" ? "wo" : "mo"}
-          offset={window.offset}
-          label={window.label}
-          canStepForward={window.canStepForward}
-        />
-      )}
+      {/* Every period steps, including the day - so a past Tuesday can be
+          looked at the same way a past week or month can. */}
+      <PeriodStepper
+        paramKey={period === "day" ? "do" : period === "week" ? "wo" : "mo"}
+        offset={window.offset}
+        label={window.label}
+        canStepForward={window.canStepForward}
+      />
 
       <div className="rounded-3xl border border-[var(--sk-hair)] bg-[var(--sk-surface)] p-5">
         <div className="mb-4 flex items-center justify-between gap-3">

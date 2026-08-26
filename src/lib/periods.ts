@@ -6,7 +6,7 @@
 // fires against the same definition. Weeks therefore start at resetHour on
 // Monday, and months at resetHour on the 1st - not at 00:00.
 import { budgetDayWindowUtc } from "@/lib/budget";
-import { istDayMonth, istMonthYear } from "@/lib/formatIst";
+import { istDayMonth, istMonthYear, istWeekdayDate } from "@/lib/formatIst";
 
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -101,23 +101,32 @@ export function periodComparisons(
   const todayStartMs = Date.parse(today.startISO);
 
   return [
-    dayPeriod(today, todayStartMs),
+    dayPeriod(todayStartMs, clampOffset(offsets.day)),
     weekPeriod(todayStartMs, clampOffset(offsets.week), nowMs),
     monthPeriod(todayStartMs, resetHour, clampOffset(offsets.month), nowMs),
   ];
 }
 
-function dayPeriod(today: Window, todayStartMs: number): PeriodComparison {
+function dayPeriod(todayStartMs: number, offset: number): PeriodComparison {
+  const start = todayStartMs + offset * DAY_MS;
+  const live = offset === 0;
   return {
     key: "day",
-    offset: 0,
-    label: "Today",
-    comparisonLabel: "vs yesterday",
-    comparisonName: "Yesterday",
-    comparisonDetail: "Today so far, against the whole of yesterday",
-    current: today,
-    previous: { startISO: iso(todayStartMs - DAY_MS), endISO: today.startISO },
-    canStepForward: false,
+    offset,
+    // A stepped day is named by its date; the live one stays "Today", which is
+    // the only label that keeps meaning as the clock moves.
+    label: live ? "Today" : istWeekdayDate(start),
+    comparisonLabel: live ? "vs yesterday" : "vs the day before",
+    comparisonName: live ? "Yesterday" : istWeekdayDate(start - DAY_MS),
+    comparisonDetail: live
+      ? "Today so far, against the whole of yesterday"
+      : `${istWeekdayDate(start)}, against the day before it`,
+    current: { startISO: iso(start), endISO: iso(start + DAY_MS) },
+    // A finished day is compared whole; the live one is deliberately compared
+    // against the WHOLE of yesterday, because that is the number that is
+    // recognisable and the one the budget push reports.
+    previous: { startISO: iso(start - DAY_MS), endISO: iso(start) },
+    canStepForward: offset < 0,
   };
 }
 

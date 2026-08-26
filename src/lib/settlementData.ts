@@ -13,6 +13,7 @@ interface GroupRow {
   name: string;
   status: "open" | "closed";
   created_at: string;
+  category_id: number | null;
   settlement_lines: { id: number; person: string; share: number; status: "open" | "settled" }[];
   transactions: {
     id: number; type: string; status: string | null; currency: string;
@@ -22,7 +23,7 @@ interface GroupRow {
 }
 
 const SELECT =
-  "id, name, status, created_at, " +
+  "id, name, status, created_at, category_id, " +
   "settlement_lines(id, person, share, status), " +
   "transactions(id, type, status, currency, amount, category_id, raw_messages(phone_received_at))";
 
@@ -32,6 +33,7 @@ function toGroup(row: GroupRow): SettlementGroup {
     name: row.name,
     status: row.status,
     createdAt: row.created_at,
+    categoryId: row.category_id,
     lines: (row.settlement_lines ?? []).map((l) => ({
       id: l.id, person: l.person, share: Number(l.share), status: l.status,
     })),

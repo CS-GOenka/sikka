@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { GroupSelectionContext } from "@/components/GroupSelectionContext";
 import { formatInr } from "@/lib/formatInr";
+import type { CategoryOption } from "@/lib/gemini";
 
 export interface SelectableTransaction {
   id: number;
@@ -27,16 +28,21 @@ interface LineDraft {
  */
 export function GroupSelectionProvider({
   transactions,
+  categories,
   children,
 }: {
   transactions: SelectableTransaction[];
+  /** Assignable leaves, for the parent's own category. */
+  categories: CategoryOption[];
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const [selecting, setSelecting] = useState(false);
+  // Selection is always available - a row click selects - so there is no mode
+  // to turn on. The toolbar appears once something is picked.
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [configuring, setConfiguring] = useState(false);
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState<string>("");
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +70,30 @@ export function GroupSelectionProvider({
   const sharesExceed = sharesTotal > 0 && sharesTotal > gross;
   const signed = (v: number) => (v < 0 ? `−${formatInr(Math.abs(v))}` : formatInr(v));
 
+  /**
+   * Divides the group's total equally among the people already listed.
+   *
+   * The remainder from an indivisible total goes on the FIRST person rather
+   * than being dropped, so the shares still add up to the total exactly -
+   * losing a paisa here would show up later as a reconciliation warning about
+   * a split that was actually fine.
+   */
+  function splitEqually() {
+    const people = lines.filter((l) => l.person.trim());
+    if (people.length === 0 || gross <= 0) return;
+    const each = Math.floor((gross / people.length) * 100) / 100;
+    const remainder = Math.round((gross - each * people.length) * 100) / 100;
+    let i = 0;
+    setLines(
+      lines.map((l) => {
+        if (!l.person.trim()) return l;
+        const share = i === 0 ? Math.round((each + remainder) * 100) / 100 : each;
+        i += 1;
+        return { ...l, share: String(share) };
+      })
+    );
+  }
+
   function toggle(id: number) {
     if (byId.get(id)?.groupName) return; // already in a group
     const next = new Set(selected);
@@ -73,10 +103,10 @@ export function GroupSelectionProvider({
   }
 
   function reset() {
-    setSelecting(false);
     setSelected(new Set());
     setConfiguring(false);
     setName("");
+    setCategoryId("");
     setLines([]);
     setError(null);
     setPending(false);
@@ -91,6 +121,7 @@ export function GroupSelectionProvider({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
+          categoryId: categoryId ? Number(categoryId) : null,
           transactionIds: [...selected],
           // Blank rows are form scaffolding, not people.
           lines: lines
@@ -111,42 +142,25 @@ export function GroupSelectionProvider({
 
   return (
     <GroupSelectionContext.Provider
-      value={{ selecting, selected, toggle, groupNameFor: (id) => byId.get(id)?.groupName ?? null }}
+      value={{ selecting: true, selected, toggle, groupNameFor: (id) => byId.get(id)?.groupName ?? null }}
     >
-      {/* Toolbar. Off, it is one unobtrusive button; on, it reports the running
-          selection and its net so the group can be judged before naming it. */}
-      {!selecting ? (
-        <div>
-          <button
-            type="button"
-            onClick={() => setSelecting(true)}
-            className="rounded-full border border-[var(--sk-hair-strong)] bg-[var(--sk-surface)] px-3.5 py-1.5 text-[0.8125rem] font-medium text-[var(--sk-ink-2)] active:bg-[var(--sk-plane)]"
-          >
-            Select transactions
-          </button>
-        </div>
-      ) : (
+      {/* Toolbar. Appears only once something is selected, so the list reads
+          normally until there is a selection to act on. */}
+      {selected.size > 0 && (
         <div className="sticky top-0 z-20 flex items-center justify-between gap-3 rounded-2xl border border-[var(--sk-accent-edge)] bg-[var(--sk-accent-tint)] px-3 py-2.5">
           <span className="min-w-0 text-[0.8125rem] font-semibold text-[var(--sk-ink)]">
-            {selected.size === 0 ? (
-              "Tap rows to select"
-            ) : (
-              <>
-                {selected.size} selected
-                <span className="font-normal text-[var(--sk-ink-2)]"> · {signed(gross)} net</span>
-              </>
-            )}
+            {selected.size} selected
+            <span className="font-normal text-[var(--sk-ink-2)]"> · {signed(gross)} net</span>
           </span>
           <span className="flex shrink-0 gap-2">
             <button type="button" onClick={reset}
               className="rounded-full px-3 py-1.5 text-[0.8125rem] font-medium text-[var(--sk-ink-2)]">
-              Cancel
+              Clear
             </button>
             <button
               type="button"
-              disabled={selected.size === 0}
               onClick={() => setConfiguring(true)}
-              className="rounded-full border border-[var(--sk-accent-edge)] bg-[var(--sk-accent)] px-3.5 py-1.5 text-[0.8125rem] font-semibold text-[var(--sk-accent-on)] disabled:opacity-40"
+              className="rounded-full border border-[var(--sk-accent-edge)] bg-[var(--sk-accent)] px-3.5 py-1.5 text-[0.8125rem] font-semibold text-[var(--sk-accent-on)]"
             >
               Group expenses
             </button>
@@ -194,6 +208,26 @@ export function GroupSelectionProvider({
               />
             </label>
 
+            {/* The parent's own category. Daughters keep theirs as record, but
+                this is what the pie and every analytic see for this group. */}
+            <label className="mt-4 flex flex-col gap-1">
+              <span className="text-[0.6875rem] font-semibold uppercase tracking-wide text-[var(--sk-ink-3)]">
+                Category
+              </span>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="rounded-xl border border-[var(--sk-hair-strong)] px-3 py-2.5 text-sm"
+              >
+                <option value="">Largest transaction&apos;s category</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.parentName ? `${c.parentName} › ${c.name}` : c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div className="mt-4 flex flex-col gap-2">
               <span className="text-[0.6875rem] font-semibold uppercase tracking-wide text-[var(--sk-ink-3)]">
                 Who owes you
@@ -218,13 +252,23 @@ export function GroupSelectionProvider({
                     className="shrink-0 px-2 text-[var(--sk-ink-3)]">✕</button>
                 </div>
               ))}
-              <button
-                type="button"
-                onClick={() => setLines([...lines, { person: "", share: "" }])}
-                className="self-start rounded-full border border-[var(--sk-hair-strong)] px-3 py-1.5 text-[0.75rem] font-medium text-[var(--sk-ink-2)]"
-              >
-                + Add person
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLines([...lines, { person: "", share: "" }])}
+                  className="rounded-full border border-[var(--sk-hair-strong)] px-3 py-1.5 text-[0.75rem] font-medium text-[var(--sk-ink-2)]"
+                >
+                  + Add person
+                </button>
+                <button
+                  type="button"
+                  onClick={splitEqually}
+                  disabled={lines.filter((l) => l.person.trim()).length === 0 || gross <= 0}
+                  className="rounded-full border border-[var(--sk-accent-edge)] px-3 py-1.5 text-[0.75rem] font-medium text-[var(--sk-accent-ink)] disabled:opacity-40"
+                >
+                  Split equally
+                </button>
+              </div>
               <p className="text-[0.75rem] text-[var(--sk-ink-3)]">
                 Add nobody if this was a pot you only passed money through — it just nets out.
               </p>
@@ -246,15 +290,20 @@ export function GroupSelectionProvider({
               </div>
             </dl>
 
-            {myShare <= 0 && selected.size > 0 && (
+            {/* Over-allocation is an error and reads red. It used to fall into
+                the "came out ahead" branch below and render GREEN - a mistake
+                congratulating itself. That branch now fires only when the
+                shares are NOT the cause. */}
+            {sharesExceed && (
+              <p className="mt-2 rounded-xl border border-[var(--sk-bad)]/25 bg-[var(--sk-bad-tint)] px-3 py-2 text-[0.75rem] font-semibold text-[var(--sk-bad)]">
+                Shares come to {formatInr(sharesTotal)}, more than the {signed(gross)} that left your account.
+                You can still save this — check the split.
+              </p>
+            )}
+            {!sharesExceed && myShare <= 0 && selected.size > 0 && (
               <p className="mt-2 rounded-xl bg-[var(--sk-good-tint)] px-3 py-2 text-[0.75rem] text-[var(--sk-good)]">
                 You came out ahead by {formatInr(Math.abs(myShare))}. A gain is not an expense, so this will add
                 nothing to your spend — the group is still kept in full.
-              </p>
-            )}
-            {sharesExceed && (
-              <p className="mt-2 rounded-xl bg-[var(--sk-warn-tint)] px-3 py-2 text-[0.75rem] text-[var(--sk-warn)]">
-                Shares come to more than the {signed(gross)} that left your account. You can still save this.
               </p>
             )}
             {error && <p className="mt-2 text-[0.75rem] text-[var(--sk-bad)]">{error}</p>}

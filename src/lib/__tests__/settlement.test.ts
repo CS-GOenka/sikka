@@ -20,7 +20,7 @@ const txn = (over: Partial<SettlementGroup["transactions"][0]> = {}) => ({
 });
 const group = (over: Partial<SettlementGroup> = {}): SettlementGroup => ({
   id: 1, name: "Group", status: "open", createdAt: "2026-08-20T10:00:00.000Z",
-  transactions: [], lines: [], ...over,
+  categoryId: null, transactions: [], lines: [], ...over,
 });
 
 describe("the dinner case - I fronted a shared cost", () => {
@@ -164,7 +164,20 @@ describe("placing the group in time and in a category", () => {
     assert.equal(groupAnchor(g), "2026-08-20T10:00:00.000Z");
   });
 
-  test("the category is the one carrying the largest debit", () => {
+  test("REGRESSION: the parent's OWN category wins over any daughter's", () => {
+    // A group's daughters can be filed anywhere - part Food, part Indulgence -
+    // so the breakdown must not depend on which happened to be largest.
+    const g = group({
+      categoryId: 50, // Indulgence, chosen for the parent
+      transactions: [
+        txn({ id: 1, amount: 5000, categoryId: 21 }),  // Dining, the largest daughter
+        txn({ id: 2, amount: 500, categoryId: 19 }),
+      ],
+    });
+    assert.equal(groupCategory(g), 50, "the parent's category drives grouped spend");
+  });
+
+  test("without one, it falls back to the largest debit's category", () => {
     const g = group({
       transactions: [
         txn({ id: 1, amount: 500, categoryId: 19 }),

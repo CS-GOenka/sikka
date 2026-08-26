@@ -36,6 +36,13 @@ export async function POST(request: NextRequest) {
   }
 
   const name = (body as { name?: unknown })?.name;
+  const rawCategoryId = (body as { categoryId?: unknown })?.categoryId;
+  const categoryId =
+    rawCategoryId === null || rawCategoryId === undefined
+      ? null
+      : typeof rawCategoryId === "number" && Number.isInteger(rawCategoryId)
+        ? rawCategoryId
+        : NaN;
   const transactionIds = (body as { transactionIds?: unknown })?.transactionIds;
   const lines = parseLines((body as { lines?: unknown })?.lines);
 
@@ -47,6 +54,7 @@ export async function POST(request: NextRequest) {
     return bad("'transactionIds' must all be integers");
   }
   if (lines === null) return bad("Each line needs a non-empty 'person' and a non-negative 'share'");
+  if (Number.isNaN(categoryId)) return bad("'categoryId' must be an integer or null");
 
   // A transaction belongs to at most one group. Claiming one that is already
   // grouped would silently move it out of the group whose total depends on it.
@@ -63,7 +71,7 @@ export async function POST(request: NextRequest) {
 
   const { data: group, error: groupError } = await supabase
     .from("settlement_groups")
-    .insert({ name: name.trim() })
+    .insert({ name: name.trim(), category_id: categoryId })
     .select("id")
     .single<{ id: number }>();
   if (groupError || !group) return bad(groupError?.message ?? "Failed to create group", 500);
@@ -92,6 +100,39 @@ export async function POST(request: NextRequest) {
   // A group with no lines has nothing outstanding, so it is born closed.
   await recomputeGroupStatus(group.id);
   return NextResponse.json({ status: "OK", groupId: group.id });
+}
+
+// Re-categorising a group, or renaming it. The parent's category is what the
+// pie and every analytic see for this group's spend, so it has to be
+// changeable after the fact.
+export async function PATCH(request: NextRequest) {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return bad("Request body must be valid JSON");
+  }
+  const groupId = (body as { groupId?: unknown })?.groupId;
+  if (typeof groupId !== "number" || !Number.isInteger(groupId)) return bad("Expected an integer 'groupId'");
+
+  const patch: { category_id?: number | null; name?: string } = {};
+  if ("categoryId" in (body as object)) {
+    const raw = (body as { categoryId?: unknown }).categoryId;
+    if (raw !== null && (typeof raw !== "number" || !Number.isInteger(raw))) {
+      return bad("'categoryId' must be an integer or null");
+    }
+    patch.category_id = raw as number | null;
+  }
+  if ("name" in (body as object)) {
+    const raw = (body as { name?: unknown }).name;
+    if (typeof raw !== "string" || !raw.trim()) return bad("'name' must be a non-empty string");
+    patch.name = raw.trim();
+  }
+  if (Object.keys(patch).length === 0) return bad("Nothing to update");
+
+  const { error } = await supabase.from("settlement_groups").update(patch).eq("id", groupId);
+  if (error) return bad(error.message, 500);
+  return NextResponse.json({ status: "OK" });
 }
 
 export async function DELETE(request: NextRequest) {

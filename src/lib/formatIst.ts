@@ -19,6 +19,7 @@ const DAY_MONTH = fmt({ day: "numeric", month: "short" });
 const MONTH_YEAR = fmt({ month: "long", year: "numeric" });
 const WEEKDAY = fmt({ weekday: "short" });
 const AXIS_DAY = fmt({ day: "2-digit", month: "short" });
+const WEEKDAY_DATE = fmt({ weekday: "short", day: "numeric", month: "short" });
 
 /** "Thu 20 Aug" - the readout above a daily bar. */
 export function istDay(ms: number): string {
@@ -67,4 +68,9 @@ export function istWeekday(ms: number): string {
  */
 export function istAxisDay(ms: number): string {
   return AXIS_DAY.format(ms).replace(/\s+/, "-");
+}
+
+/** "Tue 25 Aug" - the day stepper's label for a past day. */
+export function istWeekdayDate(ms: number): string {
+  return WEEKDAY_DATE.format(ms);
 }

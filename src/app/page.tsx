@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
 import { fetchSettlementGroups, owedSummary } from "@/lib/settlementData";
+import { fetchPendingRejections } from "@/lib/rejectedCaptures";
 import { fetchQualifyingSpendRows, getBudgetSettings } from "@/lib/budget";
 import { clampOffset, dashboardFetchWindows, periodComparisons } from "@/lib/periods";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@/lib/dashboard";
 import { ComparisonCards } from "@/components/dashboard/ComparisonCards";
 import { OwedCallout } from "@/components/dashboard/OwedCallout";
+import { RejectedCaptureCallout } from "@/components/RejectedCaptureCallout";
 import { SpendExplorer } from "@/components/dashboard/SpendExplorer";
 import { RefreshOnVisible } from "@/components/RefreshOnVisible";
 import { startTiming } from "@/lib/timing";
@@ -43,7 +45,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
 async function renderDashboard(params: Record<string, string | string[] | undefined>) {
   const { dayResetHour } = await getBudgetSettings();
   const periods = periodComparisons(dayResetHour, {
-    day: 0,
+    day: readOffset(params, "do"),
     week: readOffset(params, "wo"),
     month: readOffset(params, "mo"),
   });
@@ -63,6 +65,7 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
       getAssignableCategories(),
     ]);
   const owed = owedSummary(await fetchSettlementGroups());
+  const rejections = await fetchPendingRejections();
   // Merged windows can still abut, and a row could in principle be returned by
   // two of them, so the rows are keyed by id before anything sums them.
   const spendRows = [...new Map(windowRows.flat().map((r) => [r.id, r])).values()];
@@ -135,6 +138,7 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 px-4 pb-16 pt-3">
       <h1 className="sr-only">Sikka spending dashboard</h1>
       <RefreshOnVisible />
+      <RejectedCaptureCallout rejections={rejections} />
       <ComparisonCards cards={cards} />
       <OwedCallout owed={owed.owed} openGroups={owed.openGroups} />
       <SpendExplorer

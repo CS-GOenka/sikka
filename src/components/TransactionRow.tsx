@@ -78,9 +78,11 @@ export function TransactionRow({
         // While selecting, the whole row is the target: tapping it picks the
         // transaction rather than expanding it, which is the only thing anyone
         // wants a row to do in that mode.
-        onClick={() => (selecting ? selection?.toggle(row.id) : setOpen((o) => !o))}
-        aria-expanded={selecting ? undefined : open}
-        aria-selected={selecting ? isSelected : undefined}
+        // Clicking the row selects it. Expanding is the arrow's job alone -
+        // the two were sharing one target, so opening a row's details while
+        // picking transactions was impossible without also picking it.
+        onClick={() => selection?.toggle(row.id)}
+        aria-selected={selection ? isSelected : undefined}
       >
         <td className="px-1.5 py-2 text-xs text-zinc-500 sm:px-3 sm:text-sm">
           {/* Inside the date cell rather than a column of its own: the table is
@@ -103,6 +105,17 @@ export function TransactionRow({
           )}
           <span className="whitespace-nowrap">{row.dateShort}</span>
           {row.starred && <span className="ml-0.5 text-amber-500">★</span>}
+          {/* A daughter of a settlement group. Still real and still listed, but
+              it no longer counts on its own - only its group's net does - so it
+              has to be tellable apart without opening anything. */}
+          {row.groupName && (
+            <span
+              title={`Grouped in "${row.groupName}" — counted through the group, not on its own`}
+              className="mt-0.5 block w-fit rounded-full bg-[var(--sk-accent-tint)] px-1.5 py-px text-[9px] font-semibold leading-tight text-[var(--sk-accent-ink)] ring-1 ring-[var(--sk-accent-edge)]"
+            >
+              GROUPED
+            </span>
+          )}
           {/* A daughter of a settlement group. It is still real and still
               listed, but it no longer counts on its own - only its group's net
               does - so it has to look different from a row that does count. */}
@@ -157,11 +170,19 @@ export function TransactionRow({
             <span className="min-w-0 truncate" title={row.payee ?? undefined}>
               {row.payee ?? "—"}
             </span>
-            <span className="shrink-0 text-zinc-400">{open ? "▴" : "▾"}</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+              aria-expanded={open}
+              aria-label={open ? "Hide details" : "Show details"}
+              className="-my-1 shrink-0 px-1 py-1 text-zinc-400"
+            >
+              {open ? "▴" : "▾"}
+            </button>
           </div>
         </td>
       </tr>
-      {open && !selecting && (
+      {open && (
         <tr className="border-t border-zinc-100 bg-zinc-50 dark:border-zinc-900 dark:bg-zinc-900/50">
           {/* The remaining columns live here rather than in the table, so they
               can never push the four core columns off a phone screen. */}
