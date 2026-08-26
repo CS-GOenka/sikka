@@ -64,14 +64,18 @@ export interface DuplicateLookups {
  *    reversals. Type and amount must agree as well - a reversal is a credit
  *    against the original's debit, so it still gets through.
  *
- * 2. Amount + date + card + payee, checked only for MANUAL captures. Roughly
- *    two in five transaction SMS carry no reference at all (card-swipe alerts
- *    like "INR 194.00 spent using ICICI Bank Card XX2003 on 15-Aug-26 on
- *    Blinkit"), so without this a re-share of one of those would still double
- *    up. It is confined to manual captures on purpose: buying the same coffee
- *    twice in a day is a real thing, and the automatic path must not silently
- *    drop the second one. A hand-share of a genuine repeat is both rarer and
- *    recoverable, where a silently doubled spend total is neither.
+ * 2. Amount + date + card + payee, checked only for MANUAL captures AND only
+ *    for messages with no reference at all. Roughly two in five transaction SMS
+ *    are like that - card-swipe alerts such as "INR 194.00 spent using ICICI
+ *    Bank Card XX2003 on 15-Aug-26 on Blinkit" - so without this a re-share of
+ *    one would still double up.
+ *
+ *    It is confined to manual captures because buying the same coffee twice in
+ *    a day is real and the automatic path must not drop the second one. It is
+ *    confined to reference-less messages because a reference already answers
+ *    the question definitively, and this fingerprint answers it badly: five
+ *    people paying Rs 500 each at a poker night, or one person paying twice in
+ *    a day, are indistinguishable to it.
  */
 export async function findExistingCapture(
   input: {
@@ -102,9 +106,21 @@ export async function findExistingCapture(
     }
   }
 
+  // A message carrying a bank reference has already been judged on it. The
+  // reference identifies one movement of money, so if it matched nothing then
+  // this is a new transaction - full stop - and the fingerprint must not get a
+  // second opinion. It would be a worse one: at a poker night five people pay
+  // Rs 500 each on the same day, and two payments from the SAME person on one
+  // day are ordinary. Amount + date + card + payee cannot tell those apart,
+  // and silently swallowed real transactions that the reference proved were
+  // distinct.
+  if (reference) return null;
+
   if (!input.manualCapture) return null;
-  // Needs enough of a fingerprint to be meaningful - an amount and a date at
-  // the very least, or this would match half the table.
+  // Reference-less messages only - card-swipe alerts like "INR 194.00 spent
+  // using ICICI Bank Card XX2003 on 15-Aug-26 on Blinkit", which carry nothing
+  // else to identify them by. Needs an amount and a date at the very least, or
+  // this would match half the table.
   if (input.amount === null || !input.transactionDate) return null;
 
   let transactionId: number | null = null;

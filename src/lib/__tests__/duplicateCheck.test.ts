@@ -179,14 +179,36 @@ describe("fingerprint match - reference-less messages", () => {
     assert.equal(db.fingerprintQueries.length, 0);
   });
 
-  test("a message with a reference falls through to the fingerprint when the reference misses", async () => {
+  test("REGRESSION: a reference that matches nothing means NEW, and the fingerprint never runs", async () => {
+    // The poker-night bug. Five people paid Rs 500 each on one day, so
+    // amount + date + card + payee matched an earlier payment and silently
+    // swallowed a real one - even though the message carried its own distinct
+    // UPI reference proving it was a different movement of money.
     const db = lookups({ byReference: {}, fingerprintHit: 7777 });
     const match = await findExistingCapture(
-      { message: SAME_DAY, manualCapture: true, type: "debit", amount: 79, transactionDate: "2026-08-23", cardOrAccount: "XX7001", payee: "SNABBIT" },
+      { message: SAME_DAY, manualCapture: true, type: "credit", amount: 500, transactionDate: "2026-08-25", cardOrAccount: "XX036", payee: "Disha Goenka" },
       db
     );
-    assert.equal(match?.transactionId, 7777);
-    assert.deepEqual(db.referenceQueries, ["660111284688"]);
+    assert.equal(match, null, "a distinct reference must win over a fingerprint collision");
+    assert.deepEqual(db.referenceQueries, ["660111284688"], "the reference was still checked");
+    assert.equal(db.fingerprintQueries.length, 0, "the fingerprint must not get a second opinion");
+  });
+
+  test("REGRESSION: two payments from the SAME person on the same day both survive", async () => {
+    // Not exotic - one person settling twice in an evening. Each SMS carries
+    // its own reference, which is what distinguishes them.
+    const db = lookups({ byReference: {}, fingerprintHit: 4242 });
+    for (const ref of ["660385464217", "999111222333"]) {
+      const match = await findExistingCapture(
+        {
+          message: `Dear Customer, Acct XX036 is credited with Rs 500.00 on 25-Aug-26 from DISHA GOENKA. UPI:${ref}-ICICI Bank.`,
+          manualCapture: true, type: "credit", amount: 500,
+          transactionDate: "2026-08-25", cardOrAccount: "XX036", payee: "Disha Goenka",
+        },
+        db
+      );
+      assert.equal(match, null, `payment with reference ${ref} must be kept`);
+    }
   });
 });
 
