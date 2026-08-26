@@ -9,7 +9,7 @@ import {
   isCcPaymentConfirmation,
   tryResolveDebitForConfirmation,
 } from "@/lib/ccBillPaymentResolution";
-import { notifyBudgetForSpend } from "@/lib/budget";
+import { notifyBudgetForSpend, notifyCreditReceived } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
 import { findExistingCapture } from "@/lib/duplicateCheck";
@@ -376,13 +376,16 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
           note: classified.note,
         });
 
-        // Now that the transaction is fully classified and categorized, fire a
-        // daily-budget notification if (and only if) it's a qualifying spend.
-        // notifyBudgetForSpend re-reads the final state and no-ops for
-        // transfers/credits/investments/failed/non-INR. Only debits can
-        // qualify, so credits skip it outright.
+        // Now that the transaction is fully classified and categorized, notify.
+        // Both notifiers re-read the transaction's final state and decide for
+        // themselves, so this only has to route by type.
+        //
+        // Credits used to fall off here entirely: the branch was debit-only, so
+        // money arriving never produced a notification of any kind.
         if (transaction.type === "debit") {
           await notifyBudgetForSpend(transaction.id);
+        } else if (transaction.type === "credit") {
+          await notifyCreditReceived(transaction.id);
         }
       } catch (err) {
         console.error(`Background categorization failed for transaction ${transaction.id}:`, err);

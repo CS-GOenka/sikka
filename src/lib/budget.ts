@@ -1,6 +1,9 @@
 import { supabase } from "@/lib/supabase";
 import { sendPushToAll } from "@/lib/push";
 import { formatInr as formatInrBase } from "@/lib/formatInr";
+import { shouldNotifyCredit } from "@/lib/creditNotification";
+
+export { shouldNotifyCredit } from "@/lib/creditNotification";
 
 // The account holder and all transaction data are in IST (UTC+5:30, no DST),
 // so budget days are anchored to IST regardless of where the server runs.
@@ -236,5 +239,53 @@ export async function notifyBudgetForSpend(transactionId: number, nowMs: number 
     await sendPushToAll({ title, body, tag: "sikka-budget", url: "/transactions" });
   } catch (err) {
     console.error(`Budget notify failed for transaction ${transactionId}:`, err);
+  }
+}
+
+/**
+ * Fires one push when money arrives.
+ *
+ * Credits previously fired nothing at all: ingest only called the budget
+ * notifier for debits, and that notifier itself required type === "debit", so
+ * all 291 credits on record passed through silently.
+ *
+ * The tag is unique per transaction on purpose. The budget push reuses one tag
+ * so each spend replaces the last, which suits a running total - but six
+ * separate credits landed on a single day in this account, and one shared tag
+ * would have shown only the last of them.
+ */
+export async function notifyCreditReceived(transactionId: number, nowMs: number = Date.now()): Promise<void> {
+  try {
+    const { data: txn, error } = await supabase
+      .from("transactions")
+      .select(
+        "amount, type, status, is_transfer, currency, category_id, payee, categories(name, counts_as_spend), raw_messages(phone_received_at)"
+      )
+      .eq("id", transactionId)
+      .single<NotifyRow>();
+    if (error || !txn) {
+      console.error(`Credit notify: failed to load transaction ${transactionId}:`, error);
+      return;
+    }
+    if (!shouldNotifyCredit(txn)) return;
+
+    const amount = txn.amount as number;
+    const categoryName = txn.category_id == null ? "Uncategorized" : txn.categories?.name ?? "Uncategorized";
+    const payeeLabel = txn.payee?.trim() || null;
+
+    // Mirrors the debit push: the amount and who it came from in the title,
+    // which is all that fits on a lock screen, with the detail underneath.
+    const title = payeeLabel ? `+${formatInr(amount)} · ${payeeLabel}` : `+${formatInr(amount)} received`;
+
+    // Today's spend is carried through as the same daily anchor the debit push
+    // gives. It is phrased as spend rather than as anything the credit changed,
+    // because a credit does not reduce the day's spend total.
+    const { dayResetHour } = await getBudgetSettings();
+    const todayTotal = await computeTodaySpend(budgetDayWindowUtc(dayResetHour, nowMs));
+    const body = `${categoryName} · money in · spent today ${formatInr(todayTotal)}`;
+
+    await sendPushToAll({ title, body, tag: `sikka-credit-${transactionId}`, url: "/transactions" });
+  } catch (err) {
+    console.error(`Credit notify failed for transaction ${transactionId}:`, err);
   }
 }
