@@ -14,6 +14,7 @@ import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
 import { findExistingCapture } from "@/lib/duplicateCheck";
 import { supabaseDuplicateLookups } from "@/lib/duplicateLookups";
+import { convertTransaction, isConvertibleForeignCard } from "@/lib/fx";
 import { sendPushToAll } from "@/lib/push";
 import { startTiming } from "@/lib/timing";
 
@@ -253,12 +254,35 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ status: "OK" });
   }
 
+  // A foreign card charge arrives quoting only the foreign amount, and every
+  // spend query filters currency = 'INR', so it would otherwise be stored and
+  // then never counted. Converting here - before categorization and before the
+  // budget push - means the rest of the pipeline sees an ordinary INR row.
+  const fxCandidate = {
+    currency: classified.currency,
+    amount: classified.amount,
+    type: classified.type,
+    status: classified.status,
+    paymentMethod: classified.paymentMethod,
+    transactionDate: classified.transactionDate,
+  };
+  const needsFx = isConvertibleForeignCard(fxCandidate);
+
   // Categorization involves a Gemma call on a cache miss, which shouldn't
   // block (or risk timing out) the caller's response. Runs automatically
   // after the response is sent - no manual trigger required.
   if (transaction.type === "debit" || transaction.type === "credit") {
     after(async () => {
       try {
+        // Ordered before the budget notification below, which reads the
+        // transaction back and would otherwise quote a foreign amount as if it
+        // were rupees - or skip the row entirely for not being INR.
+        if (needsFx) {
+          const outcome = await convertTransaction(transaction.id, fxCandidate);
+          if (outcome.status === "pending") {
+            console.warn(`Transaction ${transaction.id} left for later conversion: ${outcome.reason}`);
+          }
+        }
         // Implausibly large amount: leave it flagged for review (the
         // needs_category_review insert default still stands) rather than
         // auto-resolving it as a bill payment or assigning a spend category.
