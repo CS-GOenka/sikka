@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CategoryPicker } from "@/components/CategoryPicker";
 import { StarToggle } from "@/components/StarToggle";
+import { useGroupSelection } from "@/components/GroupSelectionContext";
 import type { CategoryOption } from "@/lib/gemini";
 
 export type RowData = {
@@ -54,6 +55,12 @@ export function TransactionRow({
   categories: CategoryOption[];
 }) {
   const [open, setOpen] = useState(false);
+  // Null when the page is not offering selection at all, so this component is
+  // still usable anywhere outside the transactions table.
+  const selection = useGroupSelection();
+  const selecting = selection?.selecting ?? false;
+  const isSelected = selection?.selected.has(row.id) ?? false;
+  const alreadyGrouped = row.groupName !== null;
 
   const amountClass =
     row.type === "credit"
@@ -65,11 +72,35 @@ export function TransactionRow({
   return (
     <>
       <tr
-        className="cursor-pointer border-t border-zinc-200 align-top dark:border-zinc-800"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
+        className={`cursor-pointer border-t border-zinc-200 align-top dark:border-zinc-800 ${
+          isSelected ? "bg-[var(--sk-accent-tint)]" : ""
+        } ${selecting && alreadyGrouped ? "opacity-45" : ""}`}
+        // While selecting, the whole row is the target: tapping it picks the
+        // transaction rather than expanding it, which is the only thing anyone
+        // wants a row to do in that mode.
+        onClick={() => (selecting ? selection?.toggle(row.id) : setOpen((o) => !o))}
+        aria-expanded={selecting ? undefined : open}
+        aria-selected={selecting ? isSelected : undefined}
       >
         <td className="px-1.5 py-2 text-xs text-zinc-500 sm:px-3 sm:text-sm">
+          {/* Inside the date cell rather than a column of its own: the table is
+              table-fixed with four widths tuned to a phone, and a fifth column
+              would push the payee off the screen. */}
+          {selecting && (
+            <input
+              type="checkbox"
+              checked={isSelected}
+              disabled={alreadyGrouped}
+              onChange={() => selection?.toggle(row.id)}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={
+                alreadyGrouped
+                  ? `${row.payee ?? "Transaction"} is already in ${row.groupName}`
+                  : `Select ${row.payee ?? "transaction"}`
+              }
+              className="mr-1 size-3.5 align-middle accent-[var(--sk-accent-ink)]"
+            />
+          )}
           <span className="whitespace-nowrap">{row.dateShort}</span>
           {row.starred && <span className="ml-0.5 text-amber-500">★</span>}
           {/* A daughter of a settlement group. It is still real and still
@@ -95,8 +126,11 @@ export function TransactionRow({
         {/* Interactive cell: clicks here must not also toggle the row. */}
         <td
           className="px-1.5 py-2 sm:px-3"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
+          // Normally this cell swallows clicks so the picker works without
+          // toggling the row. While selecting there is no picker to protect and
+          // the whole row should select, so it stops swallowing.
+          onClick={(e) => { if (!selecting) e.stopPropagation(); }}
+          onKeyDown={(e) => { if (!selecting) e.stopPropagation(); }}
         >
           {row.is_transfer ? (
             <span
@@ -104,6 +138,10 @@ export function TransactionRow({
               title="Transfer (e.g. credit-card bill payment) — excluded from spend"
             >
               Transfer
+            </span>
+          ) : selecting ? (
+            <span className="block truncate text-[11px] text-zinc-500 sm:text-xs">
+              {row.categoryName ?? "Uncategorized"}
             </span>
           ) : (
             <CategoryPicker
@@ -123,7 +161,7 @@ export function TransactionRow({
           </div>
         </td>
       </tr>
-      {open && (
+      {open && !selecting && (
         <tr className="border-t border-zinc-100 bg-zinc-50 dark:border-zinc-900 dark:bg-zinc-900/50">
           {/* The remaining columns live here rather than in the table, so they
               can never push the four core columns off a phone screen. */}

@@ -4,7 +4,7 @@ import { getAssignableCategories } from "@/lib/gemini";
 import { RefreshOnVisible } from "@/components/RefreshOnVisible";
 import { TransactionRow, type RowData } from "@/components/TransactionRow";
 import { TransactionFilters, type FilterOption } from "@/components/TransactionFilters";
-import { GroupSelection, type SelectableTransaction } from "@/components/GroupSelection";
+import { GroupSelectionProvider, type SelectableTransaction } from "@/components/GroupSelectionProvider";
 import { formatReceived, formatReceivedShort } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 import {
@@ -225,10 +225,6 @@ async function renderTransactionsPage(
     type: r.type,
     amount: r.amount,
     payee: r.payee,
-    dateShort: formatReceivedShort(
-      r.raw_messages?.phone_received_at ?? null,
-      r.raw_messages?.created_at ?? null
-    ),
     groupName: r.settlement_groups?.name ?? null,
   }));
 
@@ -269,7 +265,7 @@ async function renderTransactionsPage(
         resultCount={total}
       />
 
-      <GroupSelection transactions={selectable} />
+      <GroupSelectionProvider transactions={selectable}>
 
       {/* table-fixed + explicit widths + truncation is what guarantees the four
           columns fit a phone screen; without it a long payee widens the table
@@ -323,6 +319,7 @@ async function renderTransactionsPage(
           </tbody>
         </table>
       </div>
+      </GroupSelectionProvider>
 
       <p className="text-xs text-zinc-400">
         Tap a row for the remaining fields (type, method, status, account, note) and to star it.
