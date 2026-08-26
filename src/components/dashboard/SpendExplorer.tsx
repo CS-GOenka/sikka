@@ -766,6 +766,10 @@ function Donut({
         <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS} fill="none" stroke="var(--sk-plane)" strokeWidth={THICKNESS} />
         {total > 0 &&
           arcs.map(({ slice, length, offset: start }) => {
+            // A settlement group that netted a gain has a negative amount and
+            // therefore no proportion to draw. It still counts in the centre
+            // total and is listed in full below, where a negative reads fine.
+            if (slice.amount <= 0) return null;
             const isSelected = slice.key === selectedKey;
             return (
               <circle
@@ -801,7 +805,7 @@ function Donut({
             legible on a pale slice and on a dark one alike. */}
         {total > 0 &&
           arcs.map(({ slice, length, offset: start }) => {
-            if (slice.share < 7) return null;
+            if (slice.amount <= 0 || slice.share < 7) return null;
             const midAngle = ((start + length / 2) / CIRCUMFERENCE) * 360 - 90;
             const rad = (midAngle * Math.PI) / 180;
             return (

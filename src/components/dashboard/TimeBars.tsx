@@ -83,6 +83,8 @@ export function TimeBars({
     );
   }
 
+  // A bucket can be negative once a settlement group nets a gain. There is no
+  // sensible bar for it, so it draws nothing while its value still shows.
   const height = (value: number) =>
     value > 0 ? Math.max((value / max) * TRACK_HEIGHT, MIN_BAR_PX) : 0;
 

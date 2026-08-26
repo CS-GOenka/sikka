@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { getAssignableCategories } from "@/lib/gemini";
+import { fetchSettlementGroups, owedSummary } from "@/lib/settlementData";
 import { fetchQualifyingSpendRows, getBudgetSettings } from "@/lib/budget";
 import { clampOffset, dashboardFetchWindows, periodComparisons } from "@/lib/periods";
 import {
@@ -12,6 +13,7 @@ import {
   type PeriodWindow,
 } from "@/lib/dashboard";
 import { ComparisonCards } from "@/components/dashboard/ComparisonCards";
+import { OwedCallout } from "@/components/dashboard/OwedCallout";
 import { SpendExplorer } from "@/components/dashboard/SpendExplorer";
 import { RefreshOnVisible } from "@/components/RefreshOnVisible";
 import { startTiming } from "@/lib/timing";
@@ -60,6 +62,7 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
       >(),
       getAssignableCategories(),
     ]);
+  const owed = owedSummary(await fetchSettlementGroups());
   // Merged windows can still abut, and a row could in principle be returned by
   // two of them, so the rows are keyed by id before anything sums them.
   const spendRows = [...new Map(windowRows.flat().map((r) => [r.id, r])).values()];
@@ -86,6 +89,7 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
     .filter((r): r is typeof r & { receivedAt: string } => r.receivedAt !== null)
     .map((r) => ({
       id: r.id,
+      settlementGroupId: r.settlementGroupId,
       amount: r.amount,
       payee: r.payee,
       at: r.receivedAt,
@@ -132,6 +136,7 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
       <h1 className="sr-only">Sikka spending dashboard</h1>
       <RefreshOnVisible />
       <ComparisonCards cards={cards} />
+      <OwedCallout owed={owed.owed} openGroups={owed.openGroups} />
       <SpendExplorer
         rows={rows}
         categories={categories}

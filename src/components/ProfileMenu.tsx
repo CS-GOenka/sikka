@@ -11,6 +11,7 @@ const PRIMARY = [
   { href: "/", label: "Dashboard" },
   { href: "/transactions", label: "Transactions" },
   { href: "/review", label: "Review" },
+  { href: "/groups", label: "Grouped expenses" },
   { href: "/capture-check", label: "Capture Check" },
   { href: "/categories", label: "Categories" },
   { href: "/settings", label: "Settings" },

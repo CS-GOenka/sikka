@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { sendPushToAll } from "@/lib/push";
 import { formatInr as formatInrBase } from "@/lib/formatInr";
 import { shouldNotifyCredit } from "@/lib/creditNotification";
+import { fetchSettlementGroups, groupContributions } from "@/lib/settlementData";
 
 export { shouldNotifyCredit } from "@/lib/creditNotification";
 
@@ -63,6 +64,12 @@ export function budgetDayWindowUtc(
 // spend" that both the budget total and the breakdown read from.
 export interface SpendRow {
   id: number;
+  /**
+   * Set when this row is a settlement group's net rather than a real
+   * transaction. Its id is the negated group id, so it cannot collide with a
+   * transaction, and callers that offer to open a transaction check this first.
+   */
+  settlementGroupId?: number;
   amount: number;
   payee: string | null;
   categoryId: number | null;
@@ -110,6 +117,24 @@ export async function fetchQualifyingSpendRows(window: {
   startISO: string;
   endISO: string;
 }): Promise<SpendRow[]> {
+  const [ungrouped, grouped] = await Promise.all([
+    fetchUngroupedSpendRows(window),
+    fetchGroupedSpendRows(window),
+  ]);
+  return [...ungrouped, ...grouped];
+}
+
+/**
+ * The ordinary case: a qualifying debit that belongs to no settlement group.
+ *
+ * Grouped transactions are excluded here and replaced by one net row per group
+ * below. Counting both would double-count the part of a shared bill that was
+ * never mine.
+ */
+async function fetchUngroupedSpendRows(window: {
+  startISO: string;
+  endISO: string;
+}): Promise<SpendRow[]> {
   const { data, error } = await supabase
     .from("transactions")
     .select(
@@ -119,6 +144,7 @@ export async function fetchQualifyingSpendRows(window: {
     .eq("status", "success")
     .eq("is_transfer", false)
     .eq("currency", "INR")
+    .is("settlement_group_id", null)
     .gte("raw_messages.phone_received_at", window.startISO)
     .lt("raw_messages.phone_received_at", window.endISO)
     .returns<SpendQueryRow[]>();
@@ -142,6 +168,60 @@ export async function fetchQualifyingSpendRows(window: {
       transactionDate: row.transaction_date,
       note: row.note,
       starred: row.starred === true,
+    });
+  }
+  return rows;
+}
+
+/**
+ * One synthetic row per settlement group whose anchor falls in the window,
+ * carrying the group's net instead of its transactions' individual amounts.
+ *
+ * A group that came out ahead contributes nothing rather than a negative: a
+ * gain is not an expense. It still exists in full on the groups screen - this
+ * excludes it from expense arithmetic, it does not hide it. Spend rows are
+ * therefore never negative, which is also what keeps the pie drawable.
+ */
+async function fetchGroupedSpendRows(window: {
+  startISO: string;
+  endISO: string;
+}): Promise<SpendRow[]> {
+  const groups = await fetchSettlementGroups();
+  const categoryIds = new Set<number>();
+  for (const c of groupContributions(groups)) if (c.categoryId != null) categoryIds.add(c.categoryId);
+
+  // The category names the breakdown needs, for the categories the groups
+  // actually land in.
+  const names = new Map<number, { name: string; parentId: number | null }>();
+  if (categoryIds.size > 0) {
+    const { data } = await supabase
+      .from("categories")
+      .select("id, name, parent_id")
+      .in("id", [...categoryIds])
+      .returns<{ id: number; name: string; parent_id: number | null }[]>();
+    for (const c of data ?? []) names.set(c.id, { name: c.name, parentId: c.parent_id });
+  }
+
+  const rows: SpendRow[] = [];
+  for (const c of groupContributions(groups)) {
+    if (c.anchor < window.startISO || c.anchor >= window.endISO) continue;
+    if (c.spend <= 0) continue; // a gain, or nothing at all: no expense to record
+    const category = c.categoryId == null ? null : names.get(c.categoryId) ?? null;
+    rows.push({
+      id: -c.groupId,
+      settlementGroupId: c.groupId,
+      amount: c.spend,
+      payee: c.name,
+      categoryId: c.categoryId,
+      categoryName: category?.name ?? null,
+      parentId: category?.parentId ?? null,
+      receivedAt: c.anchor,
+      paymentMethod: null,
+      accountType: null,
+      cardOrAccount: null,
+      transactionDate: null,
+      note: null,
+      starred: false,
     });
   }
   return rows;

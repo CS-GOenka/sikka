@@ -4,6 +4,7 @@ import { getAssignableCategories } from "@/lib/gemini";
 import { RefreshOnVisible } from "@/components/RefreshOnVisible";
 import { TransactionRow, type RowData } from "@/components/TransactionRow";
 import { TransactionFilters, type FilterOption } from "@/components/TransactionFilters";
+import { GroupSelection, type SelectableTransaction } from "@/components/GroupSelection";
 import { formatReceived, formatReceivedShort } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 import {
@@ -36,6 +37,8 @@ type TransactionQueryRow = {
   note: string | null;
   is_transfer: boolean;
   starred: boolean;
+  settlement_group_id: number | null;
+  settlement_groups: { name: string } | null;
   categories: { name: string } | null;
   raw_messages: { created_at: string; phone_received_at: string | null } | null;
 };
@@ -122,7 +125,7 @@ async function renderTransactionsPage(
   let query = supabase
     .from("transactions")
     .select(
-      "id, payee, amount, currency, transaction_date, type, payment_method, status, account_type, card_or_account, note, is_transfer, starred, categories(name), raw_messages!inner(created_at, phone_received_at)",
+      "id, payee, amount, currency, transaction_date, type, payment_method, status, account_type, card_or_account, note, is_transfer, starred, settlement_group_id, settlement_groups(name), categories(name), raw_messages!inner(created_at, phone_received_at)",
       { count: countMode }
     )
     .neq("type", "ignored");
@@ -203,6 +206,7 @@ async function renderTransactionsPage(
     is_transfer: r.is_transfer,
     starred: r.starred,
     categoryName: r.categories?.name ?? null,
+    groupName: r.settlement_groups?.name ?? null,
     dateShort: formatReceivedShort(
       r.raw_messages?.phone_received_at ?? null,
       r.raw_messages?.created_at ?? null
@@ -211,6 +215,21 @@ async function renderTransactionsPage(
       r.raw_messages?.phone_received_at ?? null,
       r.raw_messages?.created_at ?? null
     ),
+  }));
+
+  // What the selection panel can offer. Already-grouped rows are listed but not
+  // selectable, because a transaction belongs to at most one group and silently
+  // moving one would change the other group's total.
+  const selectable: SelectableTransaction[] = (data ?? []).map((r) => ({
+    id: r.id,
+    type: r.type,
+    amount: r.amount,
+    payee: r.payee,
+    dateShort: formatReceivedShort(
+      r.raw_messages?.phone_received_at ?? null,
+      r.raw_messages?.created_at ?? null
+    ),
+    groupName: r.settlement_groups?.name ?? null,
   }));
 
   const total = count ?? 0;
@@ -249,6 +268,8 @@ async function renderTransactionsPage(
         statusOptions={STATUS_OPTIONS}
         resultCount={total}
       />
+
+      <GroupSelection transactions={selectable} />
 
       {/* table-fixed + explicit widths + truncation is what guarantees the four
           columns fit a phone screen; without it a long payee widens the table

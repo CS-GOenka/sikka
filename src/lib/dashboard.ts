@@ -17,6 +17,8 @@ export const ROLLUP = "rollup";
 /** A qualifying debit, trimmed to what the browser actually needs. */
 export interface DashRow {
   id: number;
+  /** Set when this row is a settlement group's net, not a real transaction. */
+  settlementGroupId?: number;
   amount: number;
   payee: string | null;
   /** phone_received_at, canonical UTC ISO-8601 - sortable and comparable as text. */

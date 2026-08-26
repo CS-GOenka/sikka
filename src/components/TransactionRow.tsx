@@ -20,6 +20,8 @@ export type RowData = {
   is_transfer: boolean;
   starred: boolean;
   categoryName: string | null;
+  /** Name of the settlement group this belongs to, when it is a daughter of one. */
+  groupName: string | null;
   dateShort: string;
   receivedFull: string;
 };
@@ -70,6 +72,18 @@ export function TransactionRow({
         <td className="px-1.5 py-2 text-xs text-zinc-500 sm:px-3 sm:text-sm">
           <span className="whitespace-nowrap">{row.dateShort}</span>
           {row.starred && <span className="ml-0.5 text-amber-500">★</span>}
+          {/* A daughter of a settlement group. It is still real and still
+              listed, but it no longer counts on its own - only its group's net
+              does - so it has to look different from a row that does count. */}
+          {row.groupName && (
+            <span
+              title={`Grouped in "${row.groupName}" — counted through the group, not on its own`}
+              className="ml-0.5 text-[var(--sk-accent-ink)]"
+              aria-label={`Grouped in ${row.groupName}`}
+            >
+              ⛓
+            </span>
+          )}
         </td>
         <td
           className={`px-1.5 py-2 text-right text-xs font-medium tabular-nums sm:px-3 sm:text-sm ${amountClass}`}
@@ -124,6 +138,14 @@ export function TransactionRow({
               <Detail label="Card/account" value={row.card_or_account ?? "—"} />
               <Detail label="Transfer" value={row.is_transfer ? "yes — excluded from spend" : "no"} />
               <Detail label="Note" value={row.note ?? "—"} />
+              <Detail
+                label="Group"
+                value={
+                  row.groupName
+                    ? `${row.groupName} — counted through the group's net, not on its own`
+                    : "—"
+                }
+              />
               <div className="flex items-center gap-2 pt-1">
                 <span className="w-28 shrink-0 text-zinc-500 dark:text-zinc-400">Star</span>
                 <StarToggle transactionId={row.id} starred={row.starred} />
