@@ -4,6 +4,7 @@ import "./globals.css";
 import { RegisterServiceWorker } from "./register-sw";
 import { ProfileMenu } from "@/components/ProfileMenu";
 import { SikkaLogo } from "@/components/SikkaLogo";
+import { PushSubscriptionSync } from "@/components/PushSubscriptionSync";
 import { IngestionHealthBanner } from "@/components/IngestionHealthBanner";
 
 const geistSans = Geist({
@@ -57,6 +58,9 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <RegisterServiceWorker />
+        {/* Repairs a subscription lost to an app reinstall, which is otherwise
+            invisible: Apple keeps answering 201 for the dead endpoint. */}
+        <PushSubscriptionSync />
         <IngestionHealthBanner />
         {/* The profile button replaces the old tab bar: every other screen is
             reached from the menu it opens, leaving the dashboard as the
