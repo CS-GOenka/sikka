@@ -54,20 +54,40 @@ function toGroup(row: GroupRow): SettlementGroup {
  * by window here would drop groups that belong in it. This is a personal
  * ledger - the table holds a handful of rows - so the whole set is cheap.
  */
-export async function fetchSettlementGroups(): Promise<SettlementGroup[]> {
-  const { data, error } = await supabase.from("settlement_groups").select(SELECT).returns<GroupRow[]>();
+/**
+ * Live groups, and whether they could be read at all.
+ *
+ * The distinction matters more than it looks. "No groups exist" and "the group
+ * table could not be read" produce the same empty list but must not produce the
+ * same spend total: if a read failure were taken as "nothing is grouped", every
+ * grouped transaction would silently start counting on its own again and the
+ * total would jump. Callers use `ok` to tell the two apart.
+ */
+export async function fetchSettlementGroupsResult(): Promise<{
+  groups: SettlementGroup[];
+  ok: boolean;
+}> {
+  // Live only. An ungrouped group keeps its row, its lines and its
+  // transactions' membership so that undo is exact - it is simply not a group
+  // any more, and everything downstream must treat it as absent.
+  const { data, error } = await supabase
+    .from("settlement_groups").select(SELECT).is("deleted_at", null).returns<GroupRow[]>();
   if (error) {
     // Never let a settlement problem take a spend total down with it: the
     // ungrouped transactions are still the bulk of the answer.
     console.error("Failed to load settlement groups:", error.message);
-    return [];
+    return { groups: [], ok: false };
   }
-  return (data ?? []).map(toGroup);
+  return { groups: (data ?? []).map(toGroup), ok: true };
+}
+
+export async function fetchSettlementGroups(): Promise<SettlementGroup[]> {
+  return (await fetchSettlementGroupsResult()).groups;
 }
 
 export async function fetchSettlementGroup(id: number): Promise<SettlementGroup | null> {
   const { data, error } = await supabase
-    .from("settlement_groups").select(SELECT).eq("id", id).maybeSingle<GroupRow>();
+    .from("settlement_groups").select(SELECT).eq("id", id).is("deleted_at", null).maybeSingle<GroupRow>();
   if (error) {
     console.error(`Failed to load settlement group ${id}:`, error.message);
     return null;

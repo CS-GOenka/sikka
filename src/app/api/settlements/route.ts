@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { recomputeGroupStatus } from "@/lib/settlementData";
+import { recordUndoable } from "@/lib/settlementUndo";
+import { rememberPeople } from "@/lib/settlementPeople";
 
 // Creating a settlement group, and deleting one.
 
@@ -97,6 +99,11 @@ export async function POST(request: NextRequest) {
     return bad(tagError.message, 500);
   }
 
+  // Every name used is remembered, so a regular can be added with one tap next
+  // time. Matched case-insensitively, so this reuses a stored name rather than
+  // accumulating near-duplicates.
+  if (lines.length > 0) await rememberPeople(lines.map((l) => l.person));
+
   // A group with no lines has nothing outstanding, so it is born closed.
   await recomputeGroupStatus(group.id);
   return NextResponse.json({ status: "OK", groupId: group.id });
@@ -146,9 +153,24 @@ export async function DELETE(request: NextRequest) {
   if (typeof groupId !== "number" || !Number.isInteger(groupId)) {
     return bad("Expected an integer 'groupId'");
   }
-  // The FK is ON DELETE SET NULL, so the transactions are released back to
-  // counting individually rather than being destroyed with the group.
-  const { error } = await supabase.from("settlement_groups").delete().eq("id", groupId);
+
+  const { data: group, error: readError } = await supabase
+    .from("settlement_groups").select("id, name").eq("id", groupId)
+    .maybeSingle<{ id: number; name: string }>();
+  if (readError) return bad(readError.message, 500);
+  if (!group) return bad("That group no longer exists", 404);
+
+  // Marked gone rather than deleted. The row, its lines and its transactions'
+  // membership all stay exactly as they are, so undoing this is clearing one
+  // timestamp - nothing to rebuild, and nothing that can come back subtly
+  // different. Everything downstream reads live groups only, so the
+  // transactions go straight back to counting on their own.
+  const { error } = await supabase
+    .from("settlement_groups")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", groupId);
   if (error) return bad(error.message, 500);
+
+  await recordUndoable({ action: "ungroup", groupId, label: `Ungrouped "${group.name}"` });
   return NextResponse.json({ status: "OK" });
 }

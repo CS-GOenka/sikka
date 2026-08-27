@@ -135,10 +135,19 @@ export function GroupEditor({
         </div>
       )}
 
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => call("/api/settlements", "DELETE", { groupId })}
+        className="self-start rounded-full border border-[var(--sk-bad)]/30 px-3 py-1.5 text-[0.75rem] font-medium text-[var(--sk-bad)] disabled:opacity-50"
+      >
+        Ungroup
+      </button>
+
       {error && <p className="text-[0.75rem] text-[var(--sk-bad)]">{error}</p>}
       <p className="text-[0.6875rem] text-[var(--sk-ink-3)]">
         Removing a transaction returns it to counting on its own. The group&apos;s net, whether it counts as
-        spend at all, and the split warning are all recalculated.
+        spend at all, and the split warning are all recalculated. Ungrouping can be undone.
       </p>
     </div>
   );

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { GroupSelectionContext } from "@/components/GroupSelectionContext";
 import { formatInr } from "@/lib/formatInr";
 import type { CategoryOption } from "@/lib/gemini";
+import type { SettlementPerson } from "@/lib/settlementPeople";
 
 export interface SelectableTransaction {
   id: number;
@@ -29,11 +30,14 @@ interface LineDraft {
 export function GroupSelectionProvider({
   transactions,
   categories,
+  frequentPeople,
   children,
 }: {
   transactions: SelectableTransaction[];
   /** Assignable leaves, for the parent's own category. */
   categories: CategoryOption[];
+  /** Most-used names, for one-tap adding. */
+  frequentPeople: SettlementPerson[];
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -92,6 +96,24 @@ export function GroupSelectionProvider({
         return { ...l, share: String(share) };
       })
     );
+  }
+
+  /**
+   * Adds a remembered person in one tap.
+   *
+   * Reuses the row if that name is already on the list - typing "Asha" and
+   * then tapping the Asha pill should not produce two Ashas owing half each.
+   * Fills the first blank row before appending, so tapping three pills after
+   * "Add person" does not leave an empty line behind.
+   */
+  function addPerson(name: string) {
+    if (lines.some((l) => l.person.trim().toLowerCase() === name.toLowerCase())) return;
+    const blank = lines.findIndex((l) => !l.person.trim());
+    if (blank >= 0) {
+      setLines(lines.map((l, i) => (i === blank ? { ...l, person: name } : l)));
+    } else {
+      setLines([...lines, { person: name, share: "" }]);
+    }
   }
 
   function toggle(id: number) {
@@ -232,6 +254,34 @@ export function GroupSelectionProvider({
               <span className="text-[0.6875rem] font-semibold uppercase tracking-wide text-[var(--sk-ink-3)]">
                 Who owes you
               </span>
+
+              {/* One tap for a regular. A name already on the list is greyed
+                  out rather than hidden, so the pills do not reshuffle as they
+                  are used. */}
+              {frequentPeople.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {frequentPeople.map((p) => {
+                    const used = lines.some(
+                      (l) => l.person.trim().toLowerCase() === p.name.toLowerCase()
+                    );
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => addPerson(p.name)}
+                        disabled={used}
+                        className={`rounded-full border px-3 py-1.5 text-[0.75rem] font-medium transition-colors ${
+                          used
+                            ? "border-[var(--sk-hair)] text-[var(--sk-ink-3)] opacity-50"
+                            : "border-[var(--sk-accent-edge)] bg-[var(--sk-accent-tint)] text-[var(--sk-accent-ink)]"
+                        }`}
+                      >
+                        {used ? `✓ ${p.name}` : `+ ${p.name}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {lines.map((l, i) => (
                 <div key={i} className="flex gap-2">
                   <input

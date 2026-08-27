@@ -7,6 +7,7 @@ import { TransactionFilters, type FilterOption } from "@/components/TransactionF
 import { GroupSelectionProvider, type SelectableTransaction } from "@/components/GroupSelectionProvider";
 import { RejectedCaptureCallout } from "@/components/RejectedCaptureCallout";
 import { fetchPendingRejections } from "@/lib/rejectedCaptures";
+import { fetchFrequentPeople } from "@/lib/settlementPeople";
 import { formatReceived, formatReceivedShort } from "@/lib/formatReceived";
 import { startTiming } from "@/lib/timing";
 import {
@@ -185,7 +186,10 @@ async function renderTransactionsPage(
   ]);
 
   // Fetched before the error branch, which also renders the callout.
-  const rejections = await fetchPendingRejections();
+  const [rejections, frequentPeople] = await Promise.all([
+    fetchPendingRejections(),
+    fetchFrequentPeople(),
+  ]);
 
   if (error) {
     return (
@@ -274,7 +278,7 @@ async function renderTransactionsPage(
         resultCount={total}
       />
 
-      <GroupSelectionProvider transactions={selectable} categories={categories}>
+      <GroupSelectionProvider transactions={selectable} categories={categories} frequentPeople={frequentPeople}>
 
       {/* table-fixed + explicit widths + truncation is what guarantees the four
           columns fit a phone screen; without it a long payee widens the table

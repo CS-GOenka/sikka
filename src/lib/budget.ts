@@ -2,7 +2,8 @@ import { supabase } from "@/lib/supabase";
 import { sendPushToAll } from "@/lib/push";
 import { formatInr as formatInrBase } from "@/lib/formatInr";
 import { shouldNotifyCredit } from "@/lib/creditNotification";
-import { fetchSettlementGroups, groupContributions } from "@/lib/settlementData";
+import { fetchSettlementGroupsResult, groupContributions } from "@/lib/settlementData";
+import type { SettlementGroup } from "@/lib/settlement";
 
 export { shouldNotifyCredit } from "@/lib/creditNotification";
 
@@ -86,6 +87,7 @@ export interface SpendRow {
 
 interface SpendQueryRow {
   id: number;
+  settlement_group_id: number | null;
   amount: number | null;
   payee: string | null;
   payment_method: string | null;
@@ -117,9 +119,13 @@ export async function fetchQualifyingSpendRows(window: {
   startISO: string;
   endISO: string;
 }): Promise<SpendRow[]> {
+  // Groups are loaded once and used twice: to know which transactions are
+  // spoken for, and to emit their nets. Loading them separately in each half
+  // would let the two disagree about what a live group is.
+  const { groups, ok } = await fetchSettlementGroupsResult();
   const [ungrouped, grouped] = await Promise.all([
-    fetchUngroupedSpendRows(window),
-    fetchGroupedSpendRows(window),
+    fetchUngroupedSpendRows(window, groups, ok),
+    fetchGroupedSpendRows(window, groups),
   ]);
   return [...ungrouped, ...grouped];
 }
@@ -131,20 +137,25 @@ export async function fetchQualifyingSpendRows(window: {
  * below. Counting both would double-count the part of a shared bill that was
  * never mine.
  */
-async function fetchUngroupedSpendRows(window: {
-  startISO: string;
-  endISO: string;
-}): Promise<SpendRow[]> {
+async function fetchUngroupedSpendRows(
+  window: { startISO: string; endISO: string },
+  liveGroups: SettlementGroup[],
+  groupsReadable: boolean
+): Promise<SpendRow[]> {
+  // Membership is filtered in memory rather than in the query, because
+  // "belongs to no LIVE group" is two conditions - no group at all, or a group
+  // that has been ungrouped - and a transaction released by an ungroup must go
+  // straight back to counting on its own.
+  const liveGroupIds = new Set(liveGroups.map((g) => g.id));
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, amount, payee, payment_method, account_type, card_or_account, transaction_date, note, starred, category_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
+      "id, amount, payee, payment_method, account_type, card_or_account, transaction_date, note, starred, category_id, settlement_group_id, categories(counts_as_spend, name, parent_id), raw_messages!inner(phone_received_at)"
     )
     .eq("type", "debit")
     .eq("status", "success")
     .eq("is_transfer", false)
     .eq("currency", "INR")
-    .is("settlement_group_id", null)
     .gte("raw_messages.phone_received_at", window.startISO)
     .lt("raw_messages.phone_received_at", window.endISO)
     .returns<SpendQueryRow[]>();
@@ -153,6 +164,11 @@ async function fetchUngroupedSpendRows(window: {
   }
   const rows: SpendRow[] = [];
   for (const row of data ?? []) {
+    // When the groups could not be read, any transaction carrying a group id
+    // is left out rather than counted. Excluding it understates spend by that
+    // group's share; counting it would overstate spend by the whole
+    // transaction, and would do so silently.
+    if (row.settlement_group_id != null && (!groupsReadable || liveGroupIds.has(row.settlement_group_id))) continue;
     if (typeof row.amount !== "number" || !countsAsSpend(row)) continue;
     rows.push({
       id: row.id,
@@ -182,11 +198,10 @@ async function fetchUngroupedSpendRows(window: {
  * excludes it from expense arithmetic, it does not hide it. Spend rows are
  * therefore never negative, which is also what keeps the pie drawable.
  */
-async function fetchGroupedSpendRows(window: {
-  startISO: string;
-  endISO: string;
-}): Promise<SpendRow[]> {
-  const groups = await fetchSettlementGroups();
+async function fetchGroupedSpendRows(
+  window: { startISO: string; endISO: string },
+  groups: SettlementGroup[]
+): Promise<SpendRow[]> {
   const categoryIds = new Set<number>();
   for (const c of groupContributions(groups)) if (c.categoryId != null) categoryIds.add(c.categoryId);
 

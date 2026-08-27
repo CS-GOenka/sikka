@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { recomputeGroupStatus } from "@/lib/settlementData";
+import { recordUndoable } from "@/lib/settlementUndo";
 
 // Settling (and un-settling) a person's line. The group's status follows.
 
@@ -22,7 +23,8 @@ export async function PATCH(request: NextRequest) {
   if (typeof settled !== "boolean") return bad("Expected a boolean 'settled'");
 
   const { data: line, error: readError } = await supabase
-    .from("settlement_lines").select("id, group_id").eq("id", lineId).maybeSingle<{ id: number; group_id: number }>();
+    .from("settlement_lines").select("id, group_id, person, share").eq("id", lineId)
+    .maybeSingle<{ id: number; group_id: number; person: string; share: number }>();
   if (readError) return bad(readError.message, 500);
   if (!line) return bad("That line no longer exists", 404);
 
@@ -37,5 +39,12 @@ export async function PATCH(request: NextRequest) {
 
   // Settling the last open line closes the group; reopening one opens it again.
   await recomputeGroupStatus(line.group_id);
+
+  await recordUndoable({
+    action: settled ? "settle" : "unsettle",
+    groupId: line.group_id,
+    lineId,
+    label: settled ? `Settled ${line.person}` : `Reopened ${line.person}`,
+  });
   return NextResponse.json({ status: "OK" });
 }

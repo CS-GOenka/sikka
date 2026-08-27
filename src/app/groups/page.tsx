@@ -8,6 +8,8 @@ import {
 import type { CategoryOption } from "@/lib/gemini";
 import { SettleLineButton } from "@/components/SettleLineButton";
 import { GroupEditor } from "@/components/GroupEditor";
+import { UndoBanner } from "@/components/UndoBanner";
+import { fetchLastUndoable } from "@/lib/settlementUndo";
 import { getAssignableCategories } from "@/lib/gemini";
 import { formatInr } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
@@ -25,9 +27,10 @@ export default async function GroupsPage() {
 }
 
 async function renderGroups() {
-  const [groups, categories] = await Promise.all([
+  const [groups, categories, lastUndoable] = await Promise.all([
     fetchSettlementGroups(),
     getAssignableCategories(),
+    fetchLastUndoable(),
   ]);
   // Payees for the transaction lines, which the settlement query does not carry.
   const ids = groups.flatMap((g) => g.transactions.map((t) => t.id));
@@ -76,6 +79,8 @@ async function renderGroups() {
               : "Nothing outstanding."}
         </p>
       </div>
+
+      <UndoBanner entry={lastUndoable} />
 
       {groups.length === 0 && (
         <Link href="/transactions" className="rounded-2xl border border-[var(--sk-hair)] bg-[var(--sk-surface)] p-6 text-center text-sm text-[var(--sk-accent-ink)]">
