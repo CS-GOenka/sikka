@@ -107,6 +107,14 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // transaction already exists too; otherwise we resume processing using
   // the existing raw_messages row instead of skipping it, so a retry can
   // never leave a message permanently unclassified.
+  // Classification is pure regex (no external calls), so it runs inline -
+  // every message that reaches here is classified automatically, with no
+  // manual trigger required. It runs before BOTH duplicate checks so that a
+  // rejection can name the amount and payee it refused, and before the
+  // raw_messages insert because the receipt-time fallback uses the date it
+  // parses out of the SMS.
+  const classified = classify(message);
+
   const trimmed = message.trim();
   const dedupVariants = trimmed.endsWith(".")
     ? [trimmed, trimmed.slice(0, -1)]
@@ -115,7 +123,12 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     .from("raw_messages")
     .select("id, transactions(id)")
     .in("message", dedupVariants)
-    .limit(1);
+    .limit(1)
+    // transactions.raw_message_id is unique, so this embed is a single object
+    // or null. The generated types cannot see that constraint and infer an
+    // array, which is only wrong here - stating the real shape once is better
+    // than casting at each use.
+    .returns<{ id: number; transactions: { id: number } | null }[]>();
   if (existingError) {
     console.error("Failed to check for duplicate raw message:", existingError);
   }
@@ -123,14 +136,27 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // transactions.raw_message_id is unique, so PostgREST embeds this as a
   // single object (or null), not an array.
   if (existing && existing.transactions && !forceCapture) {
-    return NextResponse.json({ status: "OK" });
+    // Even a byte-identical re-share is reported when it was made by hand. A
+    // manual capture that disappears is the failure this whole mechanism
+    // exists to stop, and "you already have this one" is a cheap thing to
+    // dismiss - far cheaper than a transaction quietly going missing.
+    if (manualCapture) {
+      await recordRejectedCapture({
+        message,
+        amount: classified.amount,
+        payee: classified.payee,
+        transactionDate: classified.transactionDate,
+        matchedTransactionId: existing.transactions.id,
+        reason: "an identical message is already stored",
+      });
+    }
+    return NextResponse.json({
+      status: "OK",
+      duplicate: true,
+      transactionId: existing.transactions.id,
+    });
   }
 
-  // Classification is pure regex (no external calls), so it runs inline -
-  // every message that reaches here is classified automatically, with no
-  // manual trigger required. It runs before the raw_messages insert because
-  // the receipt-time fallback below uses the date it parses out of the SMS.
-  const classified = classify(message);
 
   // Already captured? The exact-text check above only catches a byte-identical
   // re-send. This catches the same transaction arriving as different text -
