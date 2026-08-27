@@ -75,27 +75,24 @@ export function GroupSelectionProvider({
   const signed = (v: number) => (v < 0 ? `−${formatInr(Math.abs(v))}` : formatInr(v));
 
   /**
-   * Divides the group's total equally among the people already listed.
+   * Divides the group's total equally among everyone who was there - the people
+   * listed AND me.
    *
-   * The remainder from an indivisible total goes on the FIRST person rather
-   * than being dropped, so the shares still add up to the total exactly -
-   * losing a paisa here would show up later as a reconciliation warning about
-   * a split that was actually fine.
+   * Splitting only between the named people would hand the whole bill to them
+   * and leave me owing nothing, which is not what an even split means: one
+   * other person on a Rs 1,000 dinner owes Rs 500, not Rs 1,000.
+   *
+   * The remainder from an indivisible total stays with me rather than being
+   * pushed onto someone else, and by construction the shares can then never
+   * exceed the total - so an even split never trips the over-allocation
+   * warning.
    */
   function splitEqually() {
     const people = lines.filter((l) => l.person.trim());
     if (people.length === 0 || gross <= 0) return;
-    const each = Math.floor((gross / people.length) * 100) / 100;
-    const remainder = Math.round((gross - each * people.length) * 100) / 100;
-    let i = 0;
-    setLines(
-      lines.map((l) => {
-        if (!l.person.trim()) return l;
-        const share = i === 0 ? Math.round((each + remainder) * 100) / 100 : each;
-        i += 1;
-        return { ...l, share: String(share) };
-      })
-    );
+    const ways = people.length + 1; // + me
+    const each = Math.floor((gross / ways) * 100) / 100;
+    setLines(lines.map((l) => (l.person.trim() ? { ...l, share: String(each) } : l)));
   }
 
   /**
@@ -320,7 +317,8 @@ export function GroupSelectionProvider({
                 </button>
               </div>
               <p className="text-[0.75rem] text-[var(--sk-ink-3)]">
-                Add nobody if this was a pot you only passed money through — it just nets out.
+                Split equally divides between them and you. Add nobody if this was a pot you only passed
+                money through — it just nets out.
               </p>
             </div>
 

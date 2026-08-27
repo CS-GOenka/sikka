@@ -41,7 +41,7 @@ type TransactionQueryRow = {
   is_transfer: boolean;
   starred: boolean;
   settlement_group_id: number | null;
-  settlement_groups: { name: string } | null;
+  settlement_groups: { name: string; deleted_at: string | null } | null;
   categories: { name: string } | null;
   raw_messages: { created_at: string; phone_received_at: string | null } | null;
 };
@@ -128,7 +128,7 @@ async function renderTransactionsPage(
   let query = supabase
     .from("transactions")
     .select(
-      "id, payee, amount, currency, transaction_date, type, payment_method, status, account_type, card_or_account, note, is_transfer, starred, settlement_group_id, settlement_groups(name), categories(name), raw_messages!inner(created_at, phone_received_at)",
+      "id, payee, amount, currency, transaction_date, type, payment_method, status, account_type, card_or_account, note, is_transfer, starred, settlement_group_id, settlement_groups(name, deleted_at), categories(name), raw_messages!inner(created_at, phone_received_at)",
       { count: countMode }
     )
     .neq("type", "ignored");
@@ -202,6 +202,14 @@ async function renderTransactionsPage(
     );
   }
 
+  // A transaction whose group has been ungrouped is NOT grouped. The embed
+  // still returns the row - the group is only marked gone, which is what makes
+  // undo exact - so the deleted_at check has to happen here. Without it an
+  // ungrouped transaction kept its badge and stayed unselectable, which is
+  // exactly the state it was just released from.
+  const liveGroupName = (r: TransactionQueryRow): string | null =>
+    r.settlement_groups && r.settlement_groups.deleted_at === null ? r.settlement_groups.name : null;
+
   const rows: RowData[] = (data ?? []).map((r) => ({
     id: r.id,
     payee: r.payee,
@@ -217,7 +225,7 @@ async function renderTransactionsPage(
     is_transfer: r.is_transfer,
     starred: r.starred,
     categoryName: r.categories?.name ?? null,
-    groupName: r.settlement_groups?.name ?? null,
+    groupName: liveGroupName(r),
     dateShort: formatReceivedShort(
       r.raw_messages?.phone_received_at ?? null,
       r.raw_messages?.created_at ?? null
@@ -236,7 +244,7 @@ async function renderTransactionsPage(
     type: r.type,
     amount: r.amount,
     payee: r.payee,
-    groupName: r.settlement_groups?.name ?? null,
+    groupName: liveGroupName(r),
   }));
 
   const total = count ?? 0;
@@ -286,9 +294,14 @@ async function renderTransactionsPage(
       <div className="rounded border border-zinc-200 dark:border-zinc-800">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col className="w-[4.2rem] sm:w-28" />
-            <col className="w-[5.2rem] sm:w-32" />
-            <col className="w-[7.5rem] sm:w-56" />
+            {/* The date column also carries the selection checkbox and the
+                grouped marker, so it needs room for all three on ONE line -
+                too narrow and every row wraps to double height. The category
+                column gives up the width, being a dropdown that truncates
+                gracefully. */}
+            <col className="w-[5.6rem] sm:w-32" />
+            <col className="w-[5rem] sm:w-32" />
+            <col className="w-[6.6rem] sm:w-52" />
             <col />
           </colgroup>
           <thead className="bg-zinc-50 text-left dark:bg-zinc-900">

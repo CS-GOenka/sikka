@@ -50,16 +50,23 @@ async function renderGroups() {
 
   // Ungrouped transactions the editor can offer to add. Recent ones only - a
   // dropdown of three thousand is not a chooser.
+  // "No LIVE group" rather than "no group": a transaction released by an
+  // ungroup keeps its group id, since nothing is destroyed, so filtering on
+  // that column alone would go on treating it as spoken for.
+  const liveIds = new Set(groups.map((g) => g.id));
   const { data: freeRows } = await supabase
     .from("transactions")
-    .select("id, payee, amount, type, transaction_date")
-    .is("settlement_group_id", null).eq("status", "success").eq("currency", "INR")
-    .order("id", { ascending: false }).limit(60)
-    .returns<{ id: number; payee: string | null; amount: number | null; type: string; transaction_date: string | null }[]>();
-  const candidates = (freeRows ?? []).map((t) => ({
-    id: t.id,
-    label: `${t.transaction_date ?? ""} ${t.type === "credit" ? "+" : "−"}${formatInr(t.amount ?? 0)} ${t.payee ?? ""}`.trim(),
-  }));
+    .select("id, payee, amount, type, transaction_date, settlement_group_id")
+    .eq("status", "success").eq("currency", "INR")
+    .order("id", { ascending: false }).limit(120)
+    .returns<{ id: number; payee: string | null; amount: number | null; type: string; transaction_date: string | null; settlement_group_id: number | null }[]>();
+  const candidates = (freeRows ?? [])
+    .filter((t) => t.settlement_group_id === null || !liveIds.has(t.settlement_group_id))
+    .slice(0, 60)
+    .map((t) => ({
+      id: t.id,
+      label: `${t.transaction_date ?? ""} ${t.type === "credit" ? "+" : "−"}${formatInr(t.amount ?? 0)} ${t.payee ?? ""}`.trim(),
+    }));
 
   // Open first - those are the ones with something left to do - then history,
   // newest first within each.
@@ -158,29 +165,22 @@ function GroupCard({
       </div>
 
       {hasPeople ? (
-        <>
-          <dl className="mt-4 flex flex-col gap-1 rounded-2xl bg-[var(--sk-plane)] p-3 text-[0.8125rem]">
-            <Row label="Paid out, less received" value={signedInr(gross)} />
-            <Row label="Others' shares" value={shares > 0 ? `− ${formatInr(shares)}` : "—"} />
-            <div className="mt-1 flex justify-between border-t border-[var(--sk-hair)] pt-2">
-              <dt className="font-semibold text-[var(--sk-ink)]">Counts as your spend</dt>
-              <dd className="font-semibold tabular-nums text-[var(--sk-ink)]">{formatInr(spend)}</dd>
-            </div>
-          </dl>
-          <ul className="mt-4 flex flex-col">
-            {group.lines.map((l) => (
-              <li key={l.id} className="flex items-center gap-3 border-b border-[var(--sk-hair)] py-2.5 last:border-b-0">
-                <span className="min-w-0 flex-1 truncate text-sm text-[var(--sk-ink)]">{l.person}</span>
-                <span className={`shrink-0 text-sm font-medium tabular-nums ${
-                  l.status === "settled" ? "text-[var(--sk-ink-3)] line-through" : "text-[var(--sk-ink)]"
-                }`}>
-                  {formatInr(l.share)}
-                </span>
-                <SettleLineButton lineId={l.id} settled={l.status === "settled"} />
-              </li>
-            ))}
-          </ul>
-        </>
+        // An open shared bill is about who still owes what. The arithmetic is
+        // still there, moved into the disclosure below - it is reference, not
+        // the thing being looked at.
+        <ul className="mt-4 flex flex-col">
+          {group.lines.map((l) => (
+            <li key={l.id} className="flex items-center gap-3 border-b border-[var(--sk-hair)] py-2.5 last:border-b-0">
+              <span className="min-w-0 flex-1 truncate text-sm text-[var(--sk-ink)]">{l.person}</span>
+              <span className={`shrink-0 text-sm font-medium tabular-nums ${
+                l.status === "settled" ? "text-[var(--sk-ink-3)] line-through" : "text-[var(--sk-ink)]"
+              }`}>
+                {formatInr(l.share)}
+              </span>
+              <SettleLineButton lineId={l.id} settled={l.status === "settled"} />
+            </li>
+          ))}
+        </ul>
       ) : (
         // No lines: one condensed line of arithmetic is the whole story.
         <div className="mt-3 flex items-baseline justify-between gap-3 rounded-2xl bg-[var(--sk-plane)] px-3 py-2.5">
@@ -209,25 +209,46 @@ function GroupCard({
         </p>
       )}
 
-      <details className="mt-3">
-        <summary className="cursor-pointer text-[0.75rem] font-medium text-[var(--sk-accent-ink)]">
-          Transactions in this group
+      <details className="group mt-3 rounded-2xl border border-[var(--sk-hair)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-[0.8125rem] font-semibold text-[var(--sk-accent-ink)]">
+          <span>
+            {hasPeople ? "Breakdown and transactions" : "Transactions in this group"}
+            <span className="ml-1.5 font-normal text-[var(--sk-ink-3)]">
+              ({group.transactions.length})
+            </span>
+          </span>
+          <span aria-hidden className="text-base leading-none transition-transform group-open:rotate-180">
+            ▾
+          </span>
         </summary>
-        <ul className="mt-2 flex flex-col gap-1.5">
-          {group.transactions.map((t) => (
-            <li key={t.id} className="flex items-baseline justify-between gap-3 text-[0.8125rem]">
-              <span className="min-w-0 truncate text-[var(--sk-ink-2)]">
-                {payees.get(t.id) ?? "—"}
-                <span className="text-[var(--sk-ink-3)]">
-                  {t.receivedAt ? ` · ${istDateTime(Date.parse(t.receivedAt))}` : ""}
+
+        <div className="border-t border-[var(--sk-hair)] px-3 py-3">
+          {hasPeople && (
+            <dl className="mb-3 flex flex-col gap-1 rounded-xl bg-[var(--sk-plane)] p-3 text-[0.8125rem]">
+              <Row label="Paid out, less received" value={signedInr(gross)} />
+              <Row label="Others' shares" value={shares > 0 ? `− ${formatInr(shares)}` : "—"} />
+              <div className="mt-1 flex justify-between border-t border-[var(--sk-hair)] pt-2">
+                <dt className="font-semibold text-[var(--sk-ink)]">Counts as your spend</dt>
+                <dd className="font-semibold tabular-nums text-[var(--sk-ink)]">{formatInr(spend)}</dd>
+              </div>
+            </dl>
+          )}
+          <ul className="flex flex-col gap-1.5">
+            {group.transactions.map((t) => (
+              <li key={t.id} className="flex items-baseline justify-between gap-3 text-[0.8125rem]">
+                <span className="min-w-0 truncate text-[var(--sk-ink-2)]">
+                  {payees.get(t.id) ?? "—"}
+                  <span className="text-[var(--sk-ink-3)]">
+                    {t.receivedAt ? ` · ${istDateTime(Date.parse(t.receivedAt))}` : ""}
+                  </span>
                 </span>
-              </span>
-              <span className={`shrink-0 tabular-nums ${t.type === "credit" ? "text-[var(--sk-good)]" : "text-[var(--sk-ink)]"}`}>
-                {t.type === "credit" ? "+" : "−"}{formatInr(t.amount ?? 0)}
-              </span>
-            </li>
-          ))}
-        </ul>
+                <span className={`shrink-0 tabular-nums ${t.type === "credit" ? "text-[var(--sk-good)]" : "text-[var(--sk-ink)]"}`}>
+                  {t.type === "credit" ? "+" : "−"}{formatInr(t.amount ?? 0)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </details>
 
       <GroupEditor
