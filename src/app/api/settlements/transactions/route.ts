@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { recomputeGroupStatus } from "@/lib/settlementData";
+import { retireUngroupUndoFor } from "@/lib/settlementUndo";
+import { findDeadGroupLinks, findLiveMembership, findLiveMemberships } from "@/lib/settlementMembership";
 
 // Adding a transaction to an existing group, and taking one out.
 //
@@ -36,19 +38,31 @@ export async function POST(request: NextRequest) {
   if (groupError) return bad(groupError.message, 500);
   if (!group) return bad("That group no longer exists", 404);
 
-  // A transaction belongs to at most one group, so claiming one that is already
-  // spoken for would silently change the other group's net.
-  const { data: taken, error: takenError } = await supabase
-    .from("transactions").select("id, settlement_group_id").in("id", transactionIds)
-    .not("settlement_group_id", "is", null)
-    .returns<{ id: number; settlement_group_id: number }[]>();
-  if (takenError) return bad(takenError.message, 500);
-  const clash = (taken ?? []).filter((t) => t.settlement_group_id !== groupId);
-  if (clash.length > 0) return bad(`Already in another group: transaction ${clash.map((t) => t.id).join(", ")}`);
+  // A transaction belongs to at most one LIVE group, so claiming one that is
+  // already spoken for would silently change the other group's net. A
+  // transaction released by an ungroup is free regardless of what its
+  // settlement_group_id still says.
+  let clash;
+  try {
+    clash = (await findLiveMemberships(transactionIds as number[])).filter((t) => t.groupId !== groupId);
+  } catch (err) {
+    return bad(err instanceof Error ? err.message : "Could not check group membership", 500);
+  }
+  if (clash.length > 0) {
+    const names = [...new Set(clash.map((t) => t.groupName))].join(", ");
+    return bad(`${clash.length} of these are already in "${names}"`);
+  }
+
+  // Read before the claim overwrites it: a transaction still pointing at an
+  // ungrouped group is the only evidence that group's undo can still be
+  // honoured in full.
+  const deadLinks = await findDeadGroupLinks(transactionIds as number[]);
 
   const { error } = await supabase
     .from("transactions").update({ settlement_group_id: groupId }).in("id", transactionIds);
   if (error) return bad(error.message, 500);
+  await retireUngroupUndoFor(deadLinks);
+
   return NextResponse.json({ status: "OK" });
 }
 
@@ -64,13 +78,17 @@ export async function DELETE(request: NextRequest) {
     return bad("Expected an integer 'transactionId'");
   }
 
-  const { data: txn, error: readError } = await supabase
-    .from("transactions").select("id, settlement_group_id").eq("id", transactionId)
-    .maybeSingle<{ id: number; settlement_group_id: number | null }>();
-  if (readError) return bad(readError.message, 500);
-  if (!txn) return bad("That transaction no longer exists", 404);
-  if (txn.settlement_group_id === null) return bad("That transaction is not in a group");
-  const groupId = txn.settlement_group_id;
+  // Only a LIVE membership can be removed. A stale id left behind by an
+  // ungroup is not a membership, and "removing" it would report success for
+  // something that had already happened.
+  let membership;
+  try {
+    membership = await findLiveMembership(transactionId);
+  } catch (err) {
+    return bad(err instanceof Error ? err.message : "Could not check group membership", 500);
+  }
+  if (!membership) return bad("That transaction is not in a group");
+  const groupId = membership.groupId;
 
   // Releasing it, not deleting it: it goes back to counting individually under
   // its own original category, and loses its grouped badge.

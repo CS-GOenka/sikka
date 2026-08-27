@@ -94,3 +94,27 @@ export async function fetchLastUndoable(nowMs: number = Date.now()): Promise<Und
     createdAt: row.created_at,
   };
 }
+
+/**
+ * Retires the pending undo for groups whose transactions have been claimed
+ * elsewhere.
+ *
+ * Ungrouping leaves a group's transactions pointing at it so that undo can put
+ * everything back. If one of those transactions is then put into a NEW group,
+ * that link is overwritten and the old group can no longer be fully restored -
+ * undoing would bring it back quietly missing a transaction, with a net and a
+ * spend contribution to match.
+ *
+ * A partial restore is worse than none, so the offer is withdrawn instead. The
+ * group stays ungrouped, which is the state the user moved on from.
+ */
+export async function retireUngroupUndoFor(groupIds: number[]): Promise<void> {
+  if (groupIds.length === 0) return;
+  const { error } = await supabase
+    .from("settlement_undo")
+    .update({ undone_at: new Date().toISOString() })
+    .eq("action", "ungroup")
+    .is("undone_at", null)
+    .in("group_id", groupIds);
+  if (error) console.error("Failed to retire ungroup undo entries:", error.message);
+}

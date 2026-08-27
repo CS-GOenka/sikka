@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { recomputeGroupStatus } from "@/lib/settlementData";
-import { recordUndoable } from "@/lib/settlementUndo";
+import { recordUndoable, retireUngroupUndoFor } from "@/lib/settlementUndo";
 import { rememberPeople } from "@/lib/settlementPeople";
+import { findDeadGroupLinks, findLiveMemberships } from "@/lib/settlementMembership";
 
 // Creating a settlement group, and deleting one.
 
@@ -58,17 +59,19 @@ export async function POST(request: NextRequest) {
   if (lines === null) return bad("Each line needs a non-empty 'person' and a non-negative 'share'");
   if (Number.isNaN(categoryId)) return bad("'categoryId' must be an integer or null");
 
-  // A transaction belongs to at most one group. Claiming one that is already
-  // grouped would silently move it out of the group whose total depends on it.
-  const { data: taken, error: takenError } = await supabase
-    .from("transactions")
-    .select("id, settlement_group_id")
-    .in("id", transactionIds)
-    .not("settlement_group_id", "is", null)
-    .returns<{ id: number; settlement_group_id: number }[]>();
-  if (takenError) return bad(takenError.message, 500);
-  if (taken && taken.length > 0) {
-    return bad(`Already in another group: transaction ${taken.map((t) => t.id).join(", ")}`);
+  // A transaction belongs to at most one LIVE group. Claiming one that is
+  // already spoken for would silently move it out of the group whose total
+  // depends on it - but a transaction released by an ungroup is free, however
+  // its settlement_group_id still reads.
+  let taken;
+  try {
+    taken = await findLiveMemberships(transactionIds as number[]);
+  } catch (err) {
+    return bad(err instanceof Error ? err.message : "Could not check group membership", 500);
+  }
+  if (taken.length > 0) {
+    const names = [...new Set(taken.map((t) => t.groupName))].join(", ");
+    return bad(`${taken.length} of these are already in "${names}"`);
   }
 
   const { data: group, error: groupError } = await supabase
@@ -90,6 +93,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Read before the claim overwrites it: a transaction still pointing at an
+  // ungrouped group is the only evidence that group's undo can still be
+  // honoured in full.
+  const deadLinks = await findDeadGroupLinks(transactionIds as number[]);
+
   const { error: tagError } = await supabase
     .from("transactions")
     .update({ settlement_group_id: group.id })
@@ -98,6 +106,8 @@ export async function POST(request: NextRequest) {
     await supabase.from("settlement_groups").delete().eq("id", group.id);
     return bad(tagError.message, 500);
   }
+
+  await retireUngroupUndoFor(deadLinks);
 
   // Every name used is remembered, so a regular can be added with one tap next
   // time. Matched case-insensitively, so this reuses a stored name rather than
