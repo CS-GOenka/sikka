@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { payeeKey } from "@/lib/payeeKey";
 
 export async function POST(request: NextRequest) {
   let body: unknown;
@@ -64,12 +65,15 @@ export async function POST(request: NextRequest) {
 
   // Manual confirmation always wins: this correction applies to every future
   // transaction from this merchant, not just the one being reviewed here.
+  // Keyed on the normalized payee so it covers every casing the bank sends -
+  // correcting an "RAZ*SWIGGY" charge has to teach the next "RAZ*Swiggy" one
+  // too, or the correction only ever sticks to the spelling it was made on.
   // Payee-less transactions (e.g. some IMPS credits) have no merchant name to
   // key a cache entry on, so just correct the transaction itself.
   if (transaction.payee) {
     const { error: upsertError } = await supabase.from("merchant_categories").upsert(
       {
-        payee: transaction.payee,
+        payee: payeeKey(transaction.payee),
         category_id: category.id,
         confidence_source: "manual",
         updated_at: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { categorizeMerchant } from "@/lib/gemini";
+import { payeeKey } from "@/lib/payeeKey";
 
 const INVESTMENT_PAYEE_MARKERS = ["zerodha", "groww", "upstox", "angelone", "angel one"];
 
@@ -110,7 +111,7 @@ function nameWords(s: string): string[] {
 
 // Different rails truncate the same person's name differently - a UPI transfer
 // carries "SUBHAM GOENKA" while a NEFT reference carries only "SUBHAM". The
-// merchant_categories cache is keyed on the exact string, so a manual
+// merchant_categories cache is keyed per distinct name, so a manual
 // "Subham Goenka -> Family" doesn't cover a later "Subham", which then falls to
 // the LLM and gets a Friends/Family coin-flip. This links them: if the payee is
 // a strict leading-name form of exactly one *manually-confirmed* Person-to-
@@ -141,11 +142,12 @@ async function findManualPersonMatch(payee: string, p2pIds: Set<number>): Promis
   return matchedCategories.size === 1 ? [...matchedCategories][0] : null;
 }
 
-// Categorizes a single transaction: hardcoded investment rules first (no
-// Gemma call), then the merchant_categories cache, then Gemma as a last
-// resort - caching any newly-derived category for future lookups. Always
-// writes the outcome (category_id + needs_category_review) back to the
-// transactions row.
+// Categorizes a single transaction, in descending order of how much the
+// source is worth trusting: a manual correction, then the hardcoded rules
+// (no Gemma call), then the rest of the merchant_categories cache, then
+// Gemma as a last resort - caching any newly-derived category for future
+// lookups. Always writes the outcome (category_id + needs_category_review)
+// back to the transactions row.
 export async function categorizeTransaction(row: {
   id: number;
   payee: string | null;
@@ -153,6 +155,7 @@ export async function categorizeTransaction(row: {
   note: string | null;
 }): Promise<CategorizeOutcome> {
   const payee = row.payee;
+  const key = payee ? payeeKey(payee) : null;
   let categoryId: number | null = null;
   let needsReview = true;
   let source: CategorizeSource = "no_payee";
@@ -170,14 +173,33 @@ export async function categorizeTransaction(row: {
     return { id: row.id, payee, categoryId: null, needsReview: false, source: "hardcoded" };
   }
 
-  if (isInvestmentTransaction(row) || isPaanShop(payee)) {
+  // The cache is read before the hardcoded rules, not after. The hardcoded
+  // branch used to run first and upsert straight over whatever was there, so a
+  // single paan-shop SMS was enough to reset a payee the user had refined from
+  // "Indulgence" down to its "Smoke" child back to the parent - and to relabel
+  // the row 'hardcoded', erasing the record that a human had ever chosen. A
+  // manual correction is the strongest signal there is; nothing below it gets
+  // to overwrite one.
+  const { data: cached, error: cacheError } = key
+    ? await supabase
+        .from("merchant_categories")
+        .select("category_id, confidence_source")
+        .eq("payee", key)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (cacheError) {
+    console.error(`Failed to check merchant_categories cache for "${key}":`, cacheError);
+  }
+  const manuallyConfirmed = cached?.confidence_source === "manual" && cached.category_id != null;
+
+  if (!manuallyConfirmed && (isInvestmentTransaction(row) || isPaanShop(payee))) {
     categoryId = isPaanShop(payee) ? await getIndulgenceCategoryId() : await getInvestmentsCategoryId();
     needsReview = false;
     source = "hardcoded";
-    if (payee) {
+    if (key) {
       const { error: upsertError } = await supabase.from("merchant_categories").upsert(
         {
-          payee,
+          payee: key,
           category_id: categoryId,
           confidence_source: "hardcoded",
           updated_at: new Date().toISOString(),
@@ -185,19 +207,10 @@ export async function categorizeTransaction(row: {
         { onConflict: "payee" }
       );
       if (upsertError) {
-        console.error(`Failed to cache hardcoded category for payee "${payee}":`, upsertError);
+        console.error(`Failed to cache hardcoded category for payee "${key}":`, upsertError);
       }
     }
-  } else if (payee) {
-    const { data: cached, error: cacheError } = await supabase
-      .from("merchant_categories")
-      .select("category_id")
-      .eq("payee", payee)
-      .maybeSingle();
-    if (cacheError) {
-      console.error(`Failed to check merchant_categories cache for "${payee}":`, cacheError);
-    }
-
+  } else if (payee && key) {
     const p2pIds = await getPersonToPersonCategoryIds();
     const personMatch = cached?.category_id ? null : await findManualPersonMatch(payee, p2pIds);
 
@@ -236,7 +249,7 @@ export async function categorizeTransaction(row: {
             const confidenceSource = row.payment_method === "mandate" ? "mandate" : "llm";
             const { error: upsertError } = await supabase.from("merchant_categories").upsert(
               {
-                payee,
+                payee: key,
                 category_id: match.id,
                 confidence_source: confidenceSource,
                 updated_at: new Date().toISOString(),
@@ -244,7 +257,7 @@ export async function categorizeTransaction(row: {
               { onConflict: "payee" }
             );
             if (upsertError) {
-              console.error(`Failed to cache category for payee "${payee}":`, upsertError);
+              console.error(`Failed to cache category for payee "${key}":`, upsertError);
             }
           }
         }
