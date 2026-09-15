@@ -1,0 +1,21 @@
+-- raw_messages.phone_received_at carries the weight of two hot paths and had
+-- no index behind it:
+--
+--   * it is the default ORDER BY for /transactions, via the embedded
+--     raw_messages(phone_received_at) sort, and
+--   * every dashboard window filters on it with gte/lte, because the day
+--     boundary is anchored on when the SMS reached the phone rather than on
+--     created_at (which is wrong for backfilled and reconciled rows).
+--
+-- The column is text, deliberately: normalizePhoneReceivedAt writes canonical
+-- UTC ISO-8601 at ingest precisely so it sorts and range-compares as text. A
+-- plain btree is therefore the right index, and desc matches the default sort
+-- direction of the transactions list.
+--
+-- Applied by hand against production on 2026-09-15 and recorded here so a
+-- rebuilt database is not quietly slower than the live one. Measured at 3,278
+-- rows the saving is small - the sort query went from ~52ms to ~44ms above the
+-- network floor, and a 30-day dashboard window now sits ~13ms above it - so
+-- this is insurance against growth rather than a fix for a present problem.
+create index if not exists raw_messages_phone_received_at_idx
+  on raw_messages (phone_received_at desc);
