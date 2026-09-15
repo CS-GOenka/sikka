@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { recomputeGroupStatus } from "@/lib/settlementData";
 import { recordUndoable } from "@/lib/settlementUndo";
 import { rememberPeople } from "@/lib/settlementPeople";
+import { formatInr } from "@/lib/formatInr";
 
 // A person's line: adding one, removing one, changing what they owe, and
 // settling or un-settling it. The group's status follows every one of them,
@@ -56,7 +57,7 @@ export async function PATCH(request: NextRequest) {
       groupId: line.group_id,
       lineId,
       prevValue: String(previous),
-      label: `${line.person}'s share changed from ₹${previous} to ₹${rounded}`,
+      label: `${line.person}'s share changed from ${formatInr(previous)} to ${formatInr(rounded)}`,
     });
     return NextResponse.json({ status: "OK", share: rounded, previous });
   }
