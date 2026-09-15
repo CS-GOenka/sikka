@@ -19,7 +19,6 @@ const PRIMARY = [
 
 const MAINTENANCE = [
   { href: "/classifier-gaps", label: "Classifier Gaps" },
-  { href: "/cleanup", label: "Cleanup" },
 ];
 
 export function ProfileMenu() {

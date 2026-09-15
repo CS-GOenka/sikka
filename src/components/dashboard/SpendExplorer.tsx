@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -38,7 +40,8 @@ import { formatInrWhole } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
 import { TimeBars, bucketReadout, type AxisMode } from "@/components/dashboard/TimeBars";
 import { BucketCompare, type TowerSegment } from "@/components/dashboard/BucketCompare";
-import { TransactionSheet } from "@/components/dashboard/TransactionSheet";
+import { TransactionDetail } from "@/components/TransactionDetail";
+import type { TxnDetail } from "@/lib/txnDetail";
 
 // Past this many named slices the ring stops being readable and the tail goes
 // into a rollup - which is then sorted back into place by size like any other
@@ -96,6 +99,7 @@ export function SpendExplorer({
   // one tap made it far too easy to fall a level deeper than intended, with
   // nothing in between that just answers "how much was that one?".
   const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
+  const router = useRouter();
   const [openTransaction, setOpenTransaction] = useState<DashRow | null>(null);
   // A second tap on an already-selected bar opens that slot up.
   const [zoomedBar, setZoomedBar] = useState<number | null>(null);
@@ -449,18 +453,20 @@ export function SpendExplorer({
         onExpand={() => setExpanded(true)}
         onDrill={drillTo}
         onOpenTransaction={setOpenTransaction}
+        onOpenGroup={(id) => router.push(`/groups/${id}`)}
       />
 
       {openTransaction && (
-        <TransactionSheet
-          row={openTransaction}
-          categoryName={
+        <TransactionDetail
+          txn={toDetail(
+            openTransaction,
             openTransaction.categoryId == null
               ? UNCATEGORISED_LABEL
               : cats.name(openTransaction.categoryId)
-          }
+          )}
           categories={assignableCategories}
           onClose={() => setOpenTransaction(null)}
+          showJumpToTransactions
         />
       )}
     </section>
@@ -928,6 +934,7 @@ function DetailPanel({
   onExpand,
   onDrill,
   onOpenTransaction,
+  onOpenGroup,
 }: {
   slices: Slice[];
   buckets: Bucket[];
@@ -939,6 +946,7 @@ function DetailPanel({
   onExpand: () => void;
   onDrill: (key: string) => void;
   onOpenTransaction: (row: DashRow) => void;
+  onOpenGroup: (groupId: number) => void;
 }) {
   // A bucket that was folded into the rollup wears the rollup's colour: the
   // swatch says "this is part of that slice", which is true.
@@ -978,8 +986,15 @@ function DetailPanel({
                   <li key={row.id} className="border-b border-[var(--sk-hair)] last:border-b-0">
                     <button
                       type="button"
-                      onClick={() => onOpenTransaction(row)}
-                      className="flex w-full items-center gap-2.5 py-2.5 text-left active:bg-[var(--sk-plane)]"
+                      // A group's net is not a transaction - it has no row to
+                      // star, recategorise or open. Its own screen is the place
+                      // where those questions have answers.
+                      onClick={() =>
+                        row.settlementGroupId
+                          ? onOpenGroup(row.settlementGroupId)
+                          : onOpenTransaction(row)
+                      }
+                      className="flex min-h-11 w-full items-center gap-2.5 py-2.5 text-left active:bg-[var(--sk-plane)]"
                     >
                       <span
                         aria-hidden
@@ -1065,4 +1080,35 @@ function DetailPanel({
       )}
     </div>
   );
+}
+
+/**
+ * A dashboard row, in the shape the shared detail view reads.
+ *
+ * Four of these fields are literals rather than data. Every row that can reach
+ * this sheet came out of the spend query, which selects only successful,
+ * non-transfer, INR debits, and replaces grouped transactions with one net row
+ * per group - so a transaction arriving here is never in a live group. They are
+ * stated rather than omitted so that a transaction reads the same here as it
+ * does on /transactions.
+ */
+function toDetail(row: DashRow, categoryName: string): TxnDetail {
+  return {
+    id: row.id,
+    payee: row.payee,
+    amount: row.amount,
+    currency: "INR",
+    receivedFull: istDateTime(Date.parse(row.at)),
+    transactionDate: row.transactionDate,
+    type: "debit",
+    paymentMethod: row.paymentMethod,
+    status: "success",
+    accountType: row.accountType,
+    cardOrAccount: row.cardOrAccount,
+    note: row.note,
+    isTransfer: false,
+    starred: row.starred,
+    categoryName,
+    groupName: null,
+  };
 }

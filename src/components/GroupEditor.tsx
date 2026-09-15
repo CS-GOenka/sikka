@@ -26,6 +26,8 @@ export function GroupEditor({
   categories,
   members,
   candidates,
+  startOpen = false,
+  onUngroupedHref,
 }: {
   groupId: number;
   name: string;
@@ -45,9 +47,13 @@ export function GroupEditor({
   categories: CategoryOption[];
   members: { id: number; label: string }[];
   candidates: { id: number; label: string }[];
+  /** Arrived from the list's ⋯ menu asking to edit, so open already open. */
+  startOpen?: boolean;
+  /** Where to go once the group no longer exists - its own screen cannot stay. */
+  onUngroupedHref?: string;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(startOpen);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState("");
@@ -58,7 +64,7 @@ export function GroupEditor({
   // rounded, rejected or sent. Only a blur with a changed, valid number saves.
   const [shareDrafts, setShareDrafts] = useState<Record<number, string>>({});
 
-  async function call(url: string, method: string, body: unknown) {
+  async function call(url: string, method: string, body: unknown, ungrouped = false) {
     setPending(true);
     setError(null);
     try {
@@ -71,6 +77,12 @@ export function GroupEditor({
       if (!res.ok || json.status !== "OK") throw new Error(json.error ?? "Failed");
       setAdding("");
       setShareDrafts({});
+      // Ungrouping from the group's own screen destroys the thing the screen is
+      // about, so there is nowhere to refresh back to.
+      if (ungrouped && onUngroupedHref) {
+        router.push(onUngroupedHref);
+        return;
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -285,7 +297,7 @@ export function GroupEditor({
       <button
         type="button"
         disabled={pending}
-        onClick={() => call("/api/settlements", "DELETE", { groupId })}
+        onClick={() => call("/api/settlements", "DELETE", { groupId }, true)}
         className="self-start rounded-full border border-[var(--sk-bad)]/30 px-3 py-1.5 text-[0.75rem] font-medium text-[var(--sk-bad)] disabled:opacity-50"
       >
         Ungroup

@@ -94,7 +94,7 @@ export function CategoryManager({ categories }: { categories: ManagedCategory[] 
             setNotice(
               `"${parent.name}" now has subcategories, so it becomes a grouping label and is no longer selectable in the picker.` +
                 (parent.transactionCount > 0
-                  ? ` ${parent.transactionCount} existing transaction${parent.transactionCount === 1 ? "" : "s"} stay assigned to it — recategorize them from /cleanup if you want them under a subcategory.`
+                  ? ` ${parent.transactionCount} existing transaction${parent.transactionCount === 1 ? "" : "s"} stay assigned to it — recategorize them from the Transactions screen if you want them under a subcategory.`
                   : "")
             );
           }

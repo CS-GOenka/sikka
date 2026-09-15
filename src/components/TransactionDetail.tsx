@@ -2,50 +2,65 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { DashRow } from "@/lib/dashboard";
 import { formatInr } from "@/lib/formatInr";
-import { istDateTime } from "@/lib/formatIst";
-import { setTransactionStarred } from "@/lib/starTransaction";
 import { setTransactionCategory } from "@/lib/setCategory";
+import { setTransactionStarred } from "@/lib/starTransaction";
 import type { CategoryOption } from "@/lib/gemini";
+import type { TxnDetail } from "@/lib/txnDetail";
+
+const UNCATEGORISED = "Uncategorized";
 
 /**
- * The bottom of the drill path: one transaction, in full.
+ * One transaction, in full - the only place either screen describes one.
  *
- * The same fields /transactions shows when a row is expanded, so the two
- * screens describe a transaction the same way. Type, status, currency and
- * transfer are deliberately absent - every row that can reach this sheet is a
- * successful non-transfer INR debit by definition of the spend query, so
- * printing them would be four lines that can never say anything else.
+ * Presented as a sheet from both entry points. The transactions list used to
+ * expand a row in place instead, which meant the same transaction had two
+ * layouts, two field sets and two names for the same button depending on how
+ * you got to it.
+ *
+ * On "Mark for review": starring a transaction and marking it for review were
+ * always the same act - one column, one endpoint - but the list called it Star
+ * and the dashboard called it Mark for review, so the app appeared to offer two
+ * things that did the same thing. It is named once here, after what it does:
+ * /review shows exactly the transactions that are flagged or uncategorised.
  */
-export function TransactionSheet({
-  row,
-  categoryName,
+export function TransactionDetail({
+  txn,
   categories,
   onClose,
+  showJumpToTransactions = false,
 }: {
-  row: DashRow;
-  categoryName: string;
+  txn: TxnDetail;
   categories: CategoryOption[];
   onClose: () => void;
+  /** Hidden when this already IS the transactions screen - it would go nowhere. */
+  showJumpToTransactions?: boolean;
 }) {
   const router = useRouter();
-  const [starred, setStarred] = useState(row.starred);
+  const [starred, setStarred] = useState(txn.starred);
+  const [category, setCategory] = useState(txn.categoryName ?? UNCATEGORISED);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState(categoryName);
   const [categoryPending, setCategoryPending] = useState(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   async function changeCategory(next: string) {
     if (!next || next === category) return;
     setCategoryPending(true);
     setCategoryError(null);
     try {
-      await setTransactionCategory(row.id, next);
+      await setTransactionCategory(txn.id, next);
       setCategory(next);
-      // Correcting a category also clears the review flag server-side, so the
-      // sheet's own star has to follow or the two would disagree on screen.
+      // The server clears the review flag as part of recategorising, so the
+      // button here has to follow or the two would disagree on screen.
       setStarred(false);
       router.refresh();
     } catch (err) {
@@ -56,24 +71,13 @@ export function TransactionSheet({
     }
   }
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   async function toggleReview() {
     const next = !starred;
     setPending(true);
     setError(null);
     try {
-      await setTransactionStarred(row.id, next);
+      await setTransactionStarred(txn.id, next);
       setStarred(next);
-      // The dashboard is server-rendered, so the row's own starred flag only
-      // catches up on a refresh - without this the sheet and the data behind
-      // it disagree the moment it is reopened.
       router.refresh();
     } catch (err) {
       console.error("Failed to flag transaction for review:", err);
@@ -83,8 +87,8 @@ export function TransactionSheet({
     }
   }
 
-  // "Ignore" is an action, not a spending category - pinned to its own group so
-  // it does not blend in among real ones, exactly as in CategoryPicker.
+  // "Ignore" is an action, not a spending category, so it is pinned to its own
+  // group rather than blending in among real ones - as in CategoryPicker.
   const ignoreOption = categories.find((c) => c.name === "Ignore");
   const grouped = new Map<string, CategoryOption[]>();
   for (const c of categories) {
@@ -93,6 +97,13 @@ export function TransactionSheet({
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key)!.push(c);
   }
+
+  const amount =
+    txn.amount == null
+      ? "—"
+      : `${txn.type === "credit" ? "+" : txn.type === "debit" ? "−" : ""}${
+          txn.currency === "INR" ? formatInr(Math.abs(txn.amount)) : `${txn.currency} ${Math.abs(txn.amount).toFixed(2)}`
+        }`;
 
   return (
     <div
@@ -109,7 +120,7 @@ export function TransactionSheet({
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="truncate text-lg font-semibold text-[var(--sk-ink)]">
-              {row.payee?.trim() || "Unknown payee"}
+              {txn.payee?.trim() || "Unknown payee"}
             </h2>
             <p className="mt-0.5 text-[0.8125rem] text-[var(--sk-ink-3)]">{category}</p>
           </div>
@@ -117,36 +128,34 @@ export function TransactionSheet({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[var(--sk-hair-strong)] text-[var(--sk-ink-2)] active:bg-[var(--sk-plane)]"
+            className="flex size-11 shrink-0 items-center justify-center rounded-full border border-[var(--sk-hair-strong)] text-[var(--sk-ink-2)] active:bg-[var(--sk-plane)]"
           >
             ✕
           </button>
         </div>
 
         <p className="text-[2rem] font-semibold leading-none tracking-tight tabular-nums text-[var(--sk-ink)]">
-          {formatInr(row.amount, 2)}
+          {amount}
         </p>
 
-        {/* Same correction path as /transactions and /review: it updates the
-            transaction and upserts merchant_categories as a manual override, so
-            future transactions from this payee inherit it. */}
+        {/* The same correction path as /review: it updates the transaction and
+            upserts merchant_categories as a manual override, so future
+            transactions from this payee inherit it. */}
         <div className="mt-5">
           <label
-            htmlFor={`category-${row.id}`}
+            htmlFor={`category-${txn.id}`}
             className="block text-[0.6875rem] font-medium uppercase tracking-wide text-[var(--sk-ink-3)]"
           >
             Category
           </label>
           <select
-            id={`category-${row.id}`}
+            id={`category-${txn.id}`}
             value={category}
             disabled={categoryPending}
             onChange={(e) => changeCategory(e.target.value)}
-            className="mt-1.5 w-full rounded-xl border border-[var(--sk-hair-strong)] bg-[var(--sk-surface)] px-3 py-2.5 text-[0.875rem] text-[var(--sk-ink)] disabled:opacity-60"
+            className="mt-1.5 min-h-11 w-full rounded-xl border border-[var(--sk-hair-strong)] bg-[var(--sk-surface)] px-3 py-2.5 text-[0.875rem] text-[var(--sk-ink)] disabled:opacity-60"
           >
-            {!categories.some((c) => c.name === category) && (
-              <option value={category}>{category}</option>
-            )}
+            {!categories.some((c) => c.name === category) && <option value={category}>{category}</option>}
             {ignoreOption && (
               <optgroup label="Actions">
                 <option value={ignoreOption.name}>Ignore</option>
@@ -166,19 +175,26 @@ export function TransactionSheet({
             {categoryError ??
               (categoryPending
                 ? "Saving…"
-                : row.payee?.trim()
-                  ? `Future ${row.payee.trim()} transactions will use this too.`
+                : txn.payee?.trim()
+                  ? `Future ${txn.payee.trim()} transactions will use this too.`
                   : "This transaction only - no payee to remember it against.")}
           </p>
         </div>
 
         <dl className="mt-5 flex flex-col gap-2.5 text-[0.8125rem]">
-          <Field label="Received" value={istDateTime(Date.parse(row.at))} />
-          <Field label="Txn date" value={row.transactionDate} />
-          <Field label="Method" value={row.paymentMethod} />
-          <Field label="Account type" value={row.accountType} />
-          <Field label="Card / account" value={row.cardOrAccount} />
-          <Field label="Note" value={row.note} />
+          <Field label="Received" value={txn.receivedFull} />
+          <Field label="Txn date" value={txn.transactionDate} />
+          <Field label="Type" value={txn.type} />
+          <Field label="Method" value={txn.paymentMethod} />
+          <Field label="Status" value={txn.status} />
+          <Field label="Account type" value={txn.accountType} />
+          <Field label="Card / account" value={txn.cardOrAccount} />
+          <Field label="Transfer" value={txn.isTransfer ? "yes — excluded from spend" : "no"} />
+          <Field label="Note" value={txn.note} />
+          <Field
+            label="Group"
+            value={txn.groupName ? `${txn.groupName} — counted through the group's net, not on its own` : null}
+          />
         </dl>
 
         <button
@@ -186,7 +202,7 @@ export function TransactionSheet({
           onClick={toggleReview}
           disabled={pending}
           aria-pressed={starred}
-          className={`mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-[0.875rem] font-semibold transition-colors disabled:opacity-60 ${
+          className={`mt-6 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-[0.875rem] font-semibold transition-colors disabled:opacity-60 ${
             starred
               ? "border-[var(--sk-accent-edge)] bg-[var(--sk-accent)] text-[var(--sk-accent-on)]"
               : "border-[var(--sk-hair-strong)] bg-[var(--sk-surface)] text-[var(--sk-ink-2)] active:bg-[var(--sk-plane)]"
@@ -198,6 +214,16 @@ export function TransactionSheet({
         <p className="mt-2 text-center text-[0.6875rem] text-[var(--sk-ink-3)]">
           {error ?? "Flagged transactions appear on the Review screen."}
         </p>
+
+        {showJumpToTransactions && (
+          <button
+            type="button"
+            onClick={() => router.push(`/transactions?focus=${txn.id}`)}
+            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-2xl border border-[var(--sk-hair-strong)] px-4 py-3 text-[0.875rem] font-medium text-[var(--sk-accent-ink)] active:bg-[var(--sk-plane)]"
+          >
+            Open in Transactions →
+          </button>
+        )}
       </div>
     </div>
   );

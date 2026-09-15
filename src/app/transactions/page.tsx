@@ -114,7 +114,19 @@ async function renderTransactionsPage(
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 ) {
   const params = await searchParams;
-  const { filters, sort, dir, page } = parseListState(params);
+  const { filters, sort, dir, page: requestedPage } = parseListState(params);
+
+  // Arriving from a transaction's detail sheet elsewhere in the app. The row
+  // could be on any page of a list this long, so rather than asking the reader
+  // to go and find it, work out which page it is on and open that one.
+  // Deliberately only honoured when no filters are set: with filters the row
+  // may not be in the result set at all, and silently dropping the filters to
+  // reach it would answer a question nobody asked.
+  const focusId = readFocusId(params);
+  const focusPage = focusId != null && !hasAnyFilter(filters)
+    ? await pageContaining(focusId, sort, dir)
+    : null;
+  const page = focusPage ?? requestedPage;
   const from = (page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
   const filtered = hasAnyFilter(filters);
@@ -333,7 +345,7 @@ async function renderTransactionsPage(
           </thead>
           <tbody>
             {rows.map((row) => (
-              <TransactionRow key={row.id} row={row} categories={categories} />
+              <TransactionRow key={row.id} row={row} categories={categories} focused={row.id === focusId} />
             ))}
             {rows.length === 0 && (
               <tr>
@@ -375,4 +387,61 @@ async function renderTransactionsPage(
       </div>
     </main>
   );
+}
+
+function readFocusId(params: Record<string, string | string[] | undefined>): number | null {
+  const raw = params.focus;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * Which page a given transaction falls on, under the list's current sort.
+ *
+ * Counted rather than searched: ask how many rows sort ahead of this one and
+ * divide. That needs the row's own sort key first, which is why this is two
+ * queries - there is no way to ask "what is this row's rank" in one.
+ *
+ * Returns null when the transaction cannot be placed, and the caller then
+ * leaves the requested page alone: a deleted or ignored id should land on a
+ * normal list rather than an error.
+ */
+async function pageContaining(id: number, sort: SortKey, dir: SortDir): Promise<number | null> {
+  const ascending = dir === "asc";
+  const { data: target } = await supabase
+    .from("transactions")
+    .select("id, amount, payee, transaction_date, categories(name), raw_messages!inner(phone_received_at)")
+    .eq("id", id)
+    .neq("type", "ignored")
+    .maybeSingle<{
+      id: number;
+      amount: number | null;
+      payee: string | null;
+      transaction_date: string | null;
+      categories: { name: string } | null;
+      raw_messages: { phone_received_at: string | null } | null;
+    }>();
+  if (!target) return null;
+
+  const key =
+    sort === "amount" ? target.amount
+    : sort === "payee" ? target.payee
+    : sort === "category" ? target.categories?.name ?? null
+    : target.raw_messages?.phone_received_at ?? null;
+  if (key === null) return null;
+
+  // Rows strictly ahead of this one. The id tiebreak the list sorts on is not
+  // reproduced here: at most a page boundary is off by the number of rows
+  // sharing this exact key, which for a timestamp is none.
+  let ahead = supabase
+    .from("transactions")
+    .select("id", { count: "exact", head: true })
+    .neq("type", "ignored");
+  const column = SORT_COLUMN[sort];
+  ahead = ascending ? ahead.lt(column, key) : ahead.gt(column, key);
+  const { count, error } = await ahead;
+  if (error || count === null) return null;
+  return Math.floor(count / PAGE_SIZE) + 1;
 }

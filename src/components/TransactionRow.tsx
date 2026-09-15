@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { CategoryPicker } from "@/components/CategoryPicker";
-import { StarToggle } from "@/components/StarToggle";
+import { TransactionDetail } from "@/components/TransactionDetail";
 import { useGroupSelection } from "@/components/GroupSelectionContext";
 import type { CategoryOption } from "@/lib/gemini";
+import type { TxnDetail } from "@/lib/txnDetail";
 
 export type RowData = {
   id: number;
@@ -37,22 +38,16 @@ function formatAmountCompact(amount: number | null, currency: string, type: stri
   return currency === "INR" ? `${sign}₹${n}` : `${sign}${currency} ${n}`;
 }
 
-function Detail({ label, value }: { label: string; value: React.ReactNode }) {
-  if (value === null || value === undefined || value === "") return null;
-  return (
-    <div className="flex gap-2">
-      <span className="w-28 shrink-0 text-zinc-500 dark:text-zinc-400">{label}</span>
-      <span className="min-w-0 break-words">{value}</span>
-    </div>
-  );
-}
 
 export function TransactionRow({
   row,
   categories,
+  focused = false,
 }: {
   row: RowData;
   categories: CategoryOption[];
+  /** Arrived here from this transaction's detail elsewhere - say which one. */
+  focused?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // Null when the page is not offering selection at all, so this component is
@@ -72,9 +67,16 @@ export function TransactionRow({
   return (
     <>
       <tr
+        id={focused ? `txn-${row.id}` : undefined}
+        // Scrolled to and ringed rather than opened. Landing with a sheet
+        // already over the list would hide the thing the reader came to see in
+        // context, which is the reason to come to this screen at all.
+        ref={focused ? (el) => el?.scrollIntoView({ block: "center" }) : undefined}
         className={`cursor-pointer border-t border-zinc-200 align-top dark:border-zinc-800 ${
           isSelected ? "bg-[var(--sk-accent-tint)]" : ""
-        } ${selecting && alreadyGrouped ? "opacity-45" : ""}`}
+        } ${focused ? "bg-[var(--sk-accent-tint)] ring-2 ring-inset ring-[var(--sk-accent-edge)]" : ""} ${
+          selecting && alreadyGrouped ? "opacity-45" : ""
+        }`}
         // The date and amount cells select. The payee cell expands and the
         // category cell edits, both of which stop the click here - so the three
         // things a row can do never fight over one tap.
@@ -174,36 +176,34 @@ export function TransactionRow({
         </td>
       </tr>
       {open && (
-        <tr className="border-t border-zinc-100 bg-zinc-50 dark:border-zinc-900 dark:bg-zinc-900/50">
-          {/* The remaining columns live here rather than in the table, so they
-              can never push the four core columns off a phone screen. */}
-          <td colSpan={4} className="px-3 py-2 text-xs">
-            <div className="flex flex-col gap-1">
-              <Detail label="Received" value={row.receivedFull} />
-              <Detail label="Txn date" value={row.transaction_date ?? "—"} />
-              <Detail label="Type" value={row.type} />
-              <Detail label="Method" value={row.payment_method} />
-              <Detail label="Status" value={row.status ?? "—"} />
-              <Detail label="Account type" value={row.account_type ?? "—"} />
-              <Detail label="Card/account" value={row.card_or_account ?? "—"} />
-              <Detail label="Transfer" value={row.is_transfer ? "yes — excluded from spend" : "no"} />
-              <Detail label="Note" value={row.note ?? "—"} />
-              <Detail
-                label="Group"
-                value={
-                  row.groupName
-                    ? `${row.groupName} — counted through the group's net, not on its own`
-                    : "—"
-                }
-              />
-              <div className="flex items-center gap-2 pt-1">
-                <span className="w-28 shrink-0 text-zinc-500 dark:text-zinc-400">Star</span>
-                <StarToggle transactionId={row.id} starred={row.starred} />
-              </div>
-            </div>
-          </td>
-        </tr>
+        <TransactionDetail
+          txn={toDetail(row)}
+          categories={categories}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
+}
+
+/** The list's row, in the shape the shared detail view reads. */
+function toDetail(row: RowData): TxnDetail {
+  return {
+    id: row.id,
+    payee: row.payee,
+    amount: row.amount,
+    currency: row.currency,
+    receivedFull: row.receivedFull,
+    transactionDate: row.transaction_date,
+    type: row.type,
+    paymentMethod: row.payment_method,
+    status: row.status,
+    accountType: row.account_type,
+    cardOrAccount: row.card_or_account,
+    note: row.note,
+    isTransfer: row.is_transfer,
+    starred: row.starred,
+    categoryName: row.categoryName,
+    groupName: row.groupName,
+  };
 }

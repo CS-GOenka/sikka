@@ -151,8 +151,12 @@ export function GroupSelectionProvider({
       const json = await res.json();
       if (!res.ok || json.status !== "OK") throw new Error(json.error ?? "Failed to create group");
       reset();
+      // Deliberately no push to /groups. Grouping is something you do while
+      // working down the transactions list, usually more than once in a
+      // sitting, and being thrown to another screen each time meant navigating
+      // back and finding your place again. The refresh is enough: the rows
+      // that just joined a group re-render as grouped where they are.
       router.refresh();
-      router.push("/groups");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create group");
       setPending(false);
