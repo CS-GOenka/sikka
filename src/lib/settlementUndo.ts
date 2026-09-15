@@ -20,7 +20,7 @@ import { supabase } from "@/lib/supabase";
 /** How long the offer stands. Long enough to notice a mistake, not a history feature. */
 export const UNDO_WINDOW_MS = 10 * 60 * 1000;
 
-export type UndoAction = "ungroup" | "settle" | "unsettle";
+export type UndoAction = "ungroup" | "settle" | "unsettle" | "share" | "remove-person";
 
 export interface UndoEntry {
   id: number;
@@ -44,12 +44,15 @@ export async function recordUndoable(input: {
   action: UndoAction;
   groupId?: number | null;
   lineId?: number | null;
+  /** What the row held before, for the actions that overwrite or delete one. */
+  prevValue?: string | null;
   label: string;
 }): Promise<void> {
   const { error } = await supabase.from("settlement_undo").insert({
     action: input.action,
     group_id: input.groupId ?? null,
     line_id: input.lineId ?? null,
+    prev_value: input.prevValue ?? null,
     label: input.label,
   });
   // Best effort: failing to record an undo must not fail the action itself.

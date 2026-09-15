@@ -34,7 +34,7 @@ import {
   type CategoryPalette,
 } from "@/lib/categoryColors";
 import { PeriodStepper } from "@/components/dashboard/PeriodStepper";
-import { formatInr } from "@/lib/formatInr";
+import { formatInrWhole } from "@/lib/formatInr";
 import { istDateTime } from "@/lib/formatIst";
 import { TimeBars, bucketReadout, type AxisMode } from "@/components/dashboard/TimeBars";
 import { BucketCompare, type TowerSegment } from "@/components/dashboard/BucketCompare";
@@ -390,10 +390,10 @@ export function SpendExplorer({
                 </span>
               </div>
               <p className="mt-2 text-[0.8125rem] tabular-nums text-[var(--sk-ink-2)]">
-                <span className="font-semibold text-[var(--sk-ink)]">{formatInr(total)}</span>
+                <span className="font-semibold text-[var(--sk-ink)]">{formatInrWhole(total)}</span>
                 <span className="text-[var(--sk-ink-3)]">
                   {" "}
-                  {scopeName} · vs {formatInr(prevTotal)} {window.prevLabel}
+                  {scopeName} · vs {formatInrWhole(prevTotal)} {window.prevLabel}
                 </span>
               </p>
               {selectedBucket && (
@@ -402,10 +402,10 @@ export function SpendExplorer({
                     {bucketReadout(selectedBucket, granularity)}
                   </span>
                   <span className="tabular-nums text-[var(--sk-ink-2)]">
-                    {formatInr(selectedBucket.amount)}
+                    {formatInrWhole(selectedBucket.amount)}
                   </span>
                   <span className="tabular-nums text-[var(--sk-ink-3)]">
-                    · {window.prevLabel} {formatInr(selectedBucket.prevAmount)}
+                    · {window.prevLabel} {formatInrWhole(selectedBucket.prevAmount)}
                   </span>
                   <span className="font-medium text-[var(--sk-accent-ink)]">Tap again to open</span>
                 </div>
@@ -761,7 +761,7 @@ function Donut({
         viewBox={`0 0 ${SIZE} ${SIZE}`}
         className="w-full overflow-visible"
         role="img"
-        aria-label={`Spend breakdown, ${label}: ${formatInr(value)} total`}
+        aria-label={`Spend breakdown, ${label}: ${formatInrWhole(value)} total`}
       >
         <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS} fill="none" stroke="var(--sk-plane)" strokeWidth={THICKNESS} />
         {total > 0 &&
@@ -793,7 +793,7 @@ function Donut({
                 }}
                 className="cursor-pointer"
               >
-                <title>{`${slice.name}: ${formatInr(slice.amount)} (${formatShare(slice.share)})`}</title>
+                <title>{`${slice.name}: ${formatInrWhole(slice.amount)} (${formatShare(slice.share)})`}</title>
               </circle>
             );
           })}
@@ -829,7 +829,7 @@ function Donut({
 
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-12 text-center">
         <span className="text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums text-[var(--sk-ink)]">
-          {formatInr(value)}
+          {formatInrWhole(value)}
         </span>
         <span className="mt-1.5 line-clamp-2 text-[0.8125rem] text-[var(--sk-ink-3)]">{label}</span>
         {sublabel && <span className="mt-0.5 text-[0.6875rem] text-[var(--sk-ink-3)]">{sublabel}</span>}
@@ -883,7 +883,7 @@ function UncategorisedCallout({
           ) : (
             <>
               <span className="tabular-nums">{formatShare(share)}</span> uncategorised ·{" "}
-              <span className="tabular-nums">{formatInr(amount)}</span>
+              <span className="tabular-nums">{formatInrWhole(amount)}</span>
             </>
           )}
         </span>
@@ -1004,7 +1004,7 @@ function DetailPanel({
                         </span>
                       )}
                       <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--sk-ink)]">
-                        {formatInr(row.amount)}
+                        {formatInrWhole(row.amount)}
                       </span>
                       <span aria-hidden className="shrink-0 text-[var(--sk-ink-3)]">
                         ›
@@ -1029,7 +1029,7 @@ function DetailPanel({
                           {bucket.name}
                         </span>
                         <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--sk-ink)]">
-                          {formatInr(bucket.amount)}
+                          {formatInrWhole(bucket.amount)}
                         </span>
                         <span className="w-9 shrink-0 text-right text-xs tabular-nums text-[var(--sk-ink-3)]">
                           {formatShare(total > 0 ? (bucket.amount / total) * 100 : 0)}

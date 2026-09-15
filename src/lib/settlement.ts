@@ -42,6 +42,13 @@ export interface SettlementGroup {
    * the breakdown depend on which happened to be largest.
    */
   categoryId: number | null;
+  /**
+   * Show what this cost instead of what it was called. A display choice for
+   * groups whose name is nobody else's business at a glance - the name is
+   * still stored, and the transactions inside are still named on
+   * /transactions. Not a privacy boundary.
+   */
+  hideName: boolean;
   transactions: GroupTransaction[];
   lines: SettlementLine[];
 }
@@ -192,4 +199,21 @@ export function myShare(group: SettlementGroup): number {
 export function groupSpendContribution(group: SettlementGroup): number {
   const net = groupNet(group);
   return net > 0 ? net : 0;
+}
+
+/**
+ * What to call a group on screen.
+ *
+ * One function for both surfaces - the groups list and the homepage breakdown
+ * - because a name hidden on one and shown on the other would be worse than
+ * not hiding it at all. The stand-in is the category and the net: what it was,
+ * and what it cost me.
+ */
+export function groupDisplayLabel(
+  group: SettlementGroup,
+  categoryName: string | null,
+  formatAmount: (n: number) => string
+): string {
+  if (!group.hideName) return group.name;
+  return `${categoryName ?? "Uncategorised"} · ${formatAmount(groupNet(group))}`;
 }

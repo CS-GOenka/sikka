@@ -132,7 +132,7 @@ export async function PATCH(request: NextRequest) {
   const groupId = (body as { groupId?: unknown })?.groupId;
   if (typeof groupId !== "number" || !Number.isInteger(groupId)) return bad("Expected an integer 'groupId'");
 
-  const patch: { category_id?: number | null; name?: string } = {};
+  const patch: { category_id?: number | null; name?: string; hide_name?: boolean } = {};
   if ("categoryId" in (body as object)) {
     const raw = (body as { categoryId?: unknown }).categoryId;
     if (raw !== null && (typeof raw !== "number" || !Number.isInteger(raw))) {
@@ -144,6 +144,11 @@ export async function PATCH(request: NextRequest) {
     const raw = (body as { name?: unknown }).name;
     if (typeof raw !== "string" || !raw.trim()) return bad("'name' must be a non-empty string");
     patch.name = raw.trim();
+  }
+  if ("hideName" in (body as object)) {
+    const raw = (body as { hideName?: unknown }).hideName;
+    if (typeof raw !== "boolean") return bad("'hideName' must be a boolean");
+    patch.hide_name = raw;
   }
   if (Object.keys(patch).length === 0) return bad("Nothing to update");
 

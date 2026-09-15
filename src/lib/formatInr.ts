@@ -16,6 +16,19 @@ export function formatInr(amount: number, fractionDigits = 2): string {
 }
 
 /**
+ * Rupees rounded to whole, for the dashboard.
+ *
+ * The one screen that deliberately drops the paise. Its job is to be read at a
+ * glance - six comparison figures, a donut, a bar axis - and at that size the
+ * paise are noise that lengthens every number without telling the reader
+ * anything. Exact figures are one tap away in the transaction sheet, and on
+ * /transactions and /groups, which both keep them.
+ */
+export function formatInrWhole(amount: number): string {
+  return formatInr(amount, 0);
+}
+
+/**
  * Rupees shortened for a chart axis or a bar label, where the exact figure is
  * available on tap and the width is not: "₹29.7k", "₹1.7L". Indian scale, so
  * it steps at lakh rather than at million.

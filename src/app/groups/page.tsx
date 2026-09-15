@@ -2,14 +2,15 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { fetchSettlementGroups } from "@/lib/settlementData";
 import {
-  groupAnchor, groupCategory, groupGross, groupNet, groupOwed, groupShares,
-  groupSpendContribution, reconcile, type SettlementGroup,
+  groupAnchor, groupCategory, groupDisplayLabel, groupGross, groupNet, groupOwed,
+  groupShares, groupSpendContribution, reconcile, type SettlementGroup,
 } from "@/lib/settlement";
 import type { CategoryOption } from "@/lib/gemini";
 import { SettleLineButton } from "@/components/SettleLineButton";
 import { GroupEditor } from "@/components/GroupEditor";
 import { UndoBanner } from "@/components/UndoBanner";
 import { fetchLastUndoable } from "@/lib/settlementUndo";
+import { fetchFrequentPeople } from "@/lib/settlementPeople";
 import { getAssignableCategories } from "@/lib/gemini";
 import { formatInr } from "@/lib/formatInr";
 import { istDateTime, istDateWithAge } from "@/lib/formatIst";
@@ -27,11 +28,13 @@ export default async function GroupsPage() {
 }
 
 async function renderGroups() {
-  const [groups, categories, lastUndoable] = await Promise.all([
+  const [groups, categories, lastUndoable, frequentPeople] = await Promise.all([
     fetchSettlementGroups(),
     getAssignableCategories(),
     fetchLastUndoable(),
+    fetchFrequentPeople(50),
   ]);
+  const knownPeople = frequentPeople.map((p) => p.name);
   // Payees for the transaction lines, which the settlement query does not carry.
   const ids = groups.flatMap((g) => g.transactions.map((t) => t.id));
   const payees = new Map<number, string | null>();
@@ -97,12 +100,12 @@ async function renderGroups() {
 
       {open.length > 0 && (
         <Section title="Open">
-          {open.map((g) => <GroupCard key={g.id} group={g} payees={payees} categoryNames={categoryNames} categories={categories} candidates={candidates} />)}
+          {open.map((g) => <GroupCard key={g.id} group={g} payees={payees} categoryNames={categoryNames} categories={categories} candidates={candidates} knownPeople={knownPeople} />)}
         </Section>
       )}
       {closed.length > 0 && (
         <Section title="History">
-          {closed.map((g) => <GroupCard key={g.id} group={g} payees={payees} categoryNames={categoryNames} categories={categories} candidates={candidates} />)}
+          {closed.map((g) => <GroupCard key={g.id} group={g} payees={payees} categoryNames={categoryNames} categories={categories} candidates={candidates} knownPeople={knownPeople} />)}
         </Section>
       )}
     </main>
@@ -119,13 +122,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function GroupCard({
-  group, payees, categoryNames, categories, candidates,
+  group, payees, categoryNames, categories, candidates, knownPeople,
 }: {
   group: SettlementGroup;
   payees: Map<number, string | null>;
   categoryNames: Map<number, string>;
   categories: CategoryOption[];
   candidates: { id: number; label: string }[];
+  knownPeople: string[];
 }) {
   const gross = groupGross(group);
   const net = groupNet(group);
@@ -155,7 +159,9 @@ function GroupCard({
           a shared bill has to say who still owes what. */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-[1.0625rem] font-semibold text-[var(--sk-ink)]">{group.name}</h3>
+          <h3 className="truncate text-[1.0625rem] font-semibold text-[var(--sk-ink)]">
+            {groupDisplayLabel(group, resolvedCategoryId != null ? categoryNames.get(resolvedCategoryId) ?? null : null, (n) => formatInr(n))}
+          </h3>
           <p className="mt-0.5 text-xs text-[var(--sk-ink-3)]">
             {group.transactions.length} transaction{group.transactions.length === 1 ? "" : "s"}
             {" · "}{categoryLabel}
@@ -279,6 +285,12 @@ function GroupCard({
 
       <GroupEditor
         groupId={group.id}
+        name={group.name}
+        hideName={group.hideName}
+        people={group.lines.map((l) => ({
+          id: l.id, person: l.person, share: l.share, settled: l.status === "settled",
+        }))}
+        knownPeople={knownPeople}
         categoryId={group.categoryId}
         resolvedCategoryLabel={categoryLabel}
         categories={categories}

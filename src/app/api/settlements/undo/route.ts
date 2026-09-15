@@ -27,13 +27,14 @@ export async function POST(request: NextRequest) {
 
   const { data: entry, error: readError } = await supabase
     .from("settlement_undo")
-    .select("id, action, group_id, line_id, undone_at")
+    .select("id, action, group_id, line_id, prev_value, undone_at")
     .eq("id", id)
     .maybeSingle<{
       id: number;
-      action: "ungroup" | "settle" | "unsettle";
+      action: "ungroup" | "settle" | "unsettle" | "share" | "remove-person";
       group_id: number | null;
       line_id: number | null;
+      prev_value: string | null;
       undone_at: string | null;
     }>();
   if (readError) return bad(readError.message, 500);
@@ -51,6 +52,36 @@ export async function POST(request: NextRequest) {
     if (error) return bad(error.message, 500);
     // Its status still follows its lines, which may have changed meanwhile.
     await recomputeGroupStatus(entry.group_id);
+  } else if (entry.action === "share") {
+    if (entry.line_id === null) return bad("That action has no line to restore");
+    if (entry.prev_value === null) return bad("That action did not record a previous share");
+    const previous = Number(entry.prev_value);
+    if (!Number.isFinite(previous)) return bad("That action's previous share is unreadable");
+    const { data: line, error: shareError } = await supabase
+      .from("settlement_lines").update({ share: previous }).eq("id", entry.line_id)
+      .select("group_id").maybeSingle<{ group_id: number }>();
+    if (shareError) return bad(shareError.message, 500);
+    if (!line) return bad("That line no longer exists", 404);
+    await recomputeGroupStatus(line.group_id);
+  } else if (entry.action === "remove-person") {
+    if (entry.prev_value === null) return bad("That action did not record the person it removed");
+    let restored: { groupId: number; person: string; share: number; status: "open" | "settled" };
+    try {
+      restored = JSON.parse(entry.prev_value);
+    } catch {
+      return bad("That action's removed person is unreadable");
+    }
+    // A new row, not the old one: the id is gone for good. Everything that
+    // reads a group reads its lines fresh, so nothing is holding the old id.
+    const { error: insertError } = await supabase.from("settlement_lines").insert({
+      group_id: restored.groupId,
+      person: restored.person,
+      share: restored.share,
+      status: restored.status,
+      settled_at: restored.status === "settled" ? new Date().toISOString() : null,
+    });
+    if (insertError) return bad(insertError.message, 500);
+    await recomputeGroupStatus(restored.groupId);
   } else {
     if (entry.line_id === null) return bad("That action has no line to restore");
     // "settle" is undone by reopening, "unsettle" by settling again.

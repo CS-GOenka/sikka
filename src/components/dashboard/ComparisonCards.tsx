@@ -1,5 +1,5 @@
 import { deltaTone, type ComparisonCard } from "@/lib/dashboard";
-import { formatInr } from "@/lib/formatInr";
+import { formatInrWhole } from "@/lib/formatInr";
 
 /**
  * Three same-shape cards, so the eye compares totals across them without
@@ -41,14 +41,14 @@ function Card({ card }: { card: ComparisonCard }) {
 
   return (
     <div
-      title={`${card.comparisonDetail} · ${formatInr(card.previous)} then, ${formatInr(card.current)} now`}
+      title={`${card.comparisonDetail} · ${formatInrWhole(card.previous)} then, ${formatInrWhole(card.current)} now`}
       className="flex flex-col rounded-2xl border border-[var(--sk-hair)] bg-[var(--sk-surface)] px-3 py-3.5"
     >
       <span className="truncate text-[0.6875rem] font-medium uppercase tracking-wide text-[var(--sk-ink-3)]">
         {card.label}
       </span>
       <span className="mt-1.5 text-[1.0625rem] font-semibold leading-tight tracking-tight tabular-nums text-[var(--sk-ink)]">
-        {formatInr(card.current)}
+        {formatInrWhole(card.current)}
       </span>
       <span className={`mt-1.5 flex items-baseline gap-0.5 text-[0.8125rem] font-semibold tabular-nums ${toneClass}`}>
         <span aria-hidden>{arrow}</span>

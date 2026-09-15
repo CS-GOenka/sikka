@@ -8,7 +8,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   deriveStatus, groupAnchor, groupCategory, groupGross, groupNet, groupOwed,
-  groupShares, groupSpendContribution, reconcile, type SettlementGroup,
+  groupDisplayLabel, groupShares, groupSpendContribution, reconcile, type SettlementGroup,
   type SettlementLine,
 } from "../settlement.ts";
 
@@ -21,7 +21,7 @@ const txn = (over: Partial<SettlementGroup["transactions"][0]> = {}) => ({
 });
 const group = (over: Partial<SettlementGroup> = {}): SettlementGroup => ({
   id: 1, name: "Group", status: "open", createdAt: "2026-08-20T10:00:00.000Z",
-  categoryId: null, transactions: [], lines: [], ...over,
+  categoryId: null, hideName: false, transactions: [], lines: [], ...over,
 });
 const line = (over: Partial<SettlementLine> & { id: number; person: string; share: number }): SettlementLine => ({
   status: "open", createdAt: "2026-08-20T10:00:00.000Z", ...over,
@@ -237,5 +237,41 @@ describe("rounding", () => {
     const net = groupNet(g);
     assert.equal(net, Math.round(net * 100) / 100);
     assert.equal(net, 1476.24);
+  });
+});
+
+describe("hiding a group's name", () => {
+  const rupees = (n: number) => `\u20b9${n}`;
+
+  test("shows the name when nothing is hidden", () => {
+    const g = group({ name: "Divorce lawyer", transactions: [txn({ amount: 5000 })] });
+    assert.equal(groupDisplayLabel(g, "Other", rupees), "Divorce lawyer");
+  });
+
+  test("swaps the name for the category and what it cost", () => {
+    // 5000 paid, 4000 owed by others, so 1000 was mine.
+    const g = group({
+      name: "Divorce lawyer",
+      hideName: true,
+      transactions: [txn({ amount: 5000 })],
+      lines: [1, 2, 3, 4].map((i) => line({ id: i, person: `P${i}`, share: 1000 })),
+    });
+    assert.equal(groupDisplayLabel(g, "Other", rupees), "Other · \u20b91000");
+    assert.ok(!groupDisplayLabel(g, "Other", rupees).includes("Divorce"));
+  });
+
+  test("says Uncategorised rather than nothing when there is no category", () => {
+    const g = group({ name: "Secret", hideName: true, transactions: [txn({ amount: 400 })] });
+    assert.equal(groupDisplayLabel(g, null, rupees), "Uncategorised · \u20b9400");
+  });
+
+  test("a hidden gain still reads as a gain, not as spend", () => {
+    // Poker: 4650 out, 5000 in. The stand-in must not launder -350 into 350.
+    const g = group({
+      name: "Poker",
+      hideName: true,
+      transactions: [txn({ amount: 4650 }), txn({ id: 2, type: "credit", amount: 5000 })],
+    });
+    assert.equal(groupDisplayLabel(g, "Games", rupees), "Games · \u20b9-350");
   });
 });

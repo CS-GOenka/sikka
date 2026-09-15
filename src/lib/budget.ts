@@ -3,7 +3,7 @@ import { sendPushToAll } from "@/lib/push";
 import { formatInr as formatInrBase } from "@/lib/formatInr";
 import { shouldNotifyCredit } from "@/lib/creditNotification";
 import { fetchSettlementGroupsResult, groupContributions } from "@/lib/settlementData";
-import type { SettlementGroup } from "@/lib/settlement";
+import { groupDisplayLabel, type SettlementGroup } from "@/lib/settlement";
 
 export { shouldNotifyCredit } from "@/lib/creditNotification";
 
@@ -222,16 +222,23 @@ async function fetchGroupedSpendRows(
     for (const c of data ?? []) names.set(c.id, { name: c.name, parentId: c.parent_id });
   }
 
+  const byId = new Map(groups.map((g) => [g.id, g]));
   const rows: SpendRow[] = [];
   for (const c of groupContributions(groups)) {
     if (c.anchor < window.startISO || c.anchor >= window.endISO) continue;
     if (c.spend <= 0) continue; // a gain, or nothing at all: no expense to record
     const category = c.categoryId == null ? null : names.get(c.categoryId) ?? null;
+    const group = byId.get(c.groupId);
     rows.push({
       id: -c.groupId,
       settlementGroupId: c.groupId,
       amount: c.spend,
-      payee: c.name,
+      // Whole rupees in the stand-in, because this label is read on the
+      // dashboard and that screen rounds. The groups tab builds the same label
+      // with its own formatter and keeps the paise.
+      payee: group
+        ? groupDisplayLabel(group, category?.name ?? null, (n) => formatInrBase(n, 0))
+        : c.name,
       categoryId: c.categoryId,
       categoryName: category?.name ?? null,
       parentId: category?.parentId ?? null,

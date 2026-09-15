@@ -1,7 +1,7 @@
 "use client";
 
 import { SERIES_COMPARISON, SERIES_CURRENT } from "@/lib/categoryColors";
-import { formatInr } from "@/lib/formatInr";
+import { formatInrWhole } from "@/lib/formatInr";
 
 /**
  * One slot of the time chart, opened up: the same slot in both periods, split
@@ -92,7 +92,7 @@ function Bar({ value, max, color }: { value: number; max: number; color: string 
         ) : null}
       </div>
       <span className="w-[4.5rem] shrink-0 text-right text-[0.6875rem] font-semibold tabular-nums text-[var(--sk-ink-2)]">
-        {value > 0 ? formatInr(value) : "—"}
+        {value > 0 ? formatInrWhole(value) : "—"}
       </span>
     </div>
   );
@@ -120,7 +120,7 @@ function LegendItem({ color, label, total }: { color: string; label: string; tot
       <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ background: color }} />
       <span className="truncate text-[0.75rem] text-[var(--sk-ink-2)]">
         {label}
-        <span className="font-semibold text-[var(--sk-ink)]"> {formatInr(total)}</span>
+        <span className="font-semibold text-[var(--sk-ink)]"> {formatInrWhole(total)}</span>
       </span>
     </li>
   );

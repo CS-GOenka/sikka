@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { Granularity, TimeBucket } from "@/lib/dashboard";
-import { formatInr, formatInrCompact } from "@/lib/formatInr";
+import { formatInrCompact, formatInrWhole } from "@/lib/formatInr";
 import { istAxisDay, istDay, istHour, istHourRange, istWeekday } from "@/lib/formatIst";
 
 // The bars answer "when", where the donut answers "on what" - the same scope, a
@@ -138,7 +138,7 @@ export function TimeBars({
                     // Same two-stage rule as a pie segment: the first tap
                     // selects the slot, a second tap on it opens the slot up.
                     onClick={() => (isSelected ? onZoom(i) : onSelect(i))}
-                    aria-label={`${labelFor(bucket.startMs, granularity)}: ${formatInr(bucket.amount)}, ${comparisonLabel} ${formatInr(bucket.prevAmount)}${isSelected ? " - tap again to open" : ""}`}
+                    aria-label={`${labelFor(bucket.startMs, granularity)}: ${formatInrWhole(bucket.amount)}, ${comparisonLabel} ${formatInrWhole(bucket.prevAmount)}${isSelected ? " - tap again to open" : ""}`}
                     aria-pressed={isSelected}
                     className="flex h-full shrink-0 flex-col justify-end px-[7px]"
                     style={{ width: SLOT_WIDTH, opacity: selected !== null && !isSelected ? 0.45 : 1 }}
