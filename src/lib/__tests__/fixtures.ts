@@ -44,3 +44,19 @@ export const UPI_COLON_REF =
   "ICICI Bank Acct XX036 debited for Rs 3390.00 on 20-Aug-26; CHANDRASHEKHARA credited. UPI:659827785171. Call 18002662 for dispute.";
 export const IMPS_REF =
   "ICICI Bank Acct XX036 credited with Rs 500.00 on 12-Jul-26 from linked mobile acct 9876543210, IMPS ref 512345678901";
+
+/**
+ * The merchant slot filled with a tracking link instead of a name (raw_message
+ * 616, transaction 1380). The email alert for the same charge names the real
+ * merchant: www.swiggy.com. Parsed as a merchant, this link became a
+ * merchant_categories key and was filed under "Other" by the model.
+ */
+export const LINK_INSTEAD_OF_MERCHANT =
+  "INR 181.00 spent using ICICI Bank Card XX2003 on 14-Jun-26 on https://icici.co/ICICIT/yoDJsE. Avl Limit: INR 75,456.71. If not you, call 1800 2662/SMS BLOCK 2003 to 9215676766.";
+
+/** Real merchant names that contain a domain and must NOT be mistaken for links. */
+export const DOMAIN_SHAPED_MERCHANTS = [
+  "Rs 39,113.27 spent on ICICI Bank Card XX2003 on 04-Apr-26 at AGODA.COM THE M. Avl Lmt: Rs 1,25,214.16",
+  "Rs 2,396.22 spent on ICICI Bank Card XX2003 on 14-Apr-26 at WWW.HOSTELWORLD. Avl Lmt: Rs 33,196.71",
+  "Rs 10,673.80 spent on ICICI Bank Card XX2003 on 27-Jul-24 at 2CO.com*shop.mb. Avl Lmt: Rs 33,196.71",
+];

@@ -92,10 +92,30 @@ function capitalize(w: string): string {
   return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 }
 
+// ICICI sometimes fills the merchant slot with a tracking link instead of a
+// name: "INR 181.00 spent using ICICI Bank Card XX2003 on 14-Jun-26 on
+// https://icici.co/ICICIT/yoDJsE." A link is not a merchant, and storing it as
+// one is worse than storing nothing. It becomes a merchant_categories key, so
+// it teaches the cache an entry that can never be hit again (the link is
+// one-time), and the link itself gets sent to the model to categorize - which
+// duly answers, confidently and wrongly. The real merchant for the message
+// above was www.swiggy.com; it was filed under "Other".
+//
+// Narrow on purpose. Real merchant names contain domains all the time -
+// "AGODA.COM THE M", "WWW.HOSTELWORLD", "2CO.com*shop.mb" - and every one of
+// those must survive. Only a scheme, or a domain followed by a path, marks a
+// link rather than a name.
+const LINK_NOT_MERCHANT_RE = /^https?:\/\/|^(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S/i;
+
 // Proper-case a raw payee string without fabricating content. VPA-style
 // (contains '@') and pure numeric/code tokens are left untouched.
+//
+// Returns null for a link, which routes the transaction to review with the
+// link preserved in the note - the amount, card and date are still trustworthy,
+// so the row is kept and only the name it could not learn is left blank.
 function cleanPayee(raw: string | null): string | null {
   if (raw == null) return null;
+  if (LINK_NOT_MERCHANT_RE.test(raw.trim())) return null;
   if (raw.includes("@")) return raw;
   const words = raw.split(" ");
   const cleaned: string[] = [];
