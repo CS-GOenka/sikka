@@ -22,11 +22,13 @@ Run periodically via launchd - see scripts/com.sikka.reconcile.plist.
 Meant to run only on this Mac (chat.db access required); never deployed.
 """
 
+import hashlib
 import json
 import os
 import re
 import sqlite3
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
@@ -38,6 +40,28 @@ TARGET = "icici bank"
 # 10 days (not 7) so a delayed iCloud/Messages sync still lands inside the
 # window whenever it eventually completes, rather than aging out permanently.
 LOOKBACK_DAYS = 10
+
+# Messages this script has had positive confirmation about, so a run that finds
+# nothing new costs no HTTP at all.
+#
+# Re-POSTing the whole window every 15 minutes was never free. Each run cost
+# ~40 round trips that all ended in "already have it", which is what let a run
+# outlast its own 15-minute interval - launchd will not start a second copy
+# while one is alive, so a slow run swallows the next few slots and the gap
+# looks like the schedule is broken. Worse, the duplicate checks in
+# /api/ingest are deliberately fail-open, so every needless re-POST was
+# another chance for a transient database error to mint a duplicate
+# transaction; that is exactly how four of them appeared in September.
+LEDGER_PATH = os.path.expanduser("~/.sikka/reconcile_ledger.json")
+
+# Per-request ceiling. 30s meant one unresponsive request could hold a run open
+# for half a minute on its own, and forty of them for twenty minutes.
+POST_TIMEOUT_SECONDS = 12
+
+# Hard wall-clock budget for one run, comfortably inside the 900s launchd
+# interval. Anything left over is simply picked up by the next run - the
+# lookback window is 10 days, so nothing ages out because a run stopped early.
+RUN_BUDGET_SECONDS = 420
 
 SENSITIVE_PATTERNS = [
     re.compile(r"otp", re.I),
@@ -168,7 +192,7 @@ def post_message(message, phone_received_at):
         INGEST_URL, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=POST_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
@@ -190,6 +214,51 @@ def post_health(path, payload=None):
         print(f"  health post to {path} failed: {e}", file=sys.stderr)
 
 
+def message_key(message):
+    return hashlib.sha256(message.encode("utf-8")).hexdigest()
+
+
+def load_ledger():
+    try:
+        with open(LEDGER_PATH) as fh:
+            return set(json.load(fh).get("confirmed", []))
+    except (FileNotFoundError, ValueError, OSError):
+        # A missing or corrupt ledger is not an error worth stopping for - it
+        # just means this run re-confirms everything, which is the old
+        # behaviour and always safe.
+        return set()
+
+
+def save_ledger(confirmed):
+    try:
+        os.makedirs(os.path.dirname(LEDGER_PATH), exist_ok=True)
+        tmp = f"{LEDGER_PATH}.tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"confirmed": sorted(confirmed)}, fh)
+        os.replace(tmp, LEDGER_PATH)
+    except OSError as e:
+        print(f"  could not write ledger ({e}); next run will re-confirm", file=sys.stderr)
+
+
+def confirms_stored(body):
+    """True only when the app said this message is already stored AND names the
+    transaction it belongs to.
+
+    Deliberately strict. A bare 200 means the POST was accepted, not that a
+    transaction exists - the insert happens after the response on some paths,
+    and a few message shapes never produce a transaction at all. Recording only
+    an explicit duplicate+transactionId means a message the app has not fully
+    processed is always retried, so the ledger can never become a way to lose
+    one. The cost is that a newly-created transaction is posted once more on the
+    next run before being recorded, and never again after that.
+    """
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return False
+    return parsed.get("duplicate") is True and parsed.get("transactionId") is not None
+
+
 def main():
     messages, skipped = fetch_recent_icici_messages()
     print(f"{datetime.utcnow().isoformat()}Z: scanning last {LOOKBACK_DAYS} days, "
@@ -204,17 +273,39 @@ def main():
         for reason, snippet, iso in skipped:
             print(f"    SKIP[{reason}] {iso}: {snippet!r}")
 
+    confirmed = load_ledger()
+    pending = [(m, ts) for m, ts in messages if message_key(m) not in confirmed]
+    already = len(messages) - len(pending)
+
     ok = 0
     failed = 0
-    for msg, phone_received_at in messages:
+    newly_confirmed = 0
+    ran_out_of_time = 0
+    deadline = time.monotonic() + RUN_BUDGET_SECONDS
+
+    for i, (msg, phone_received_at) in enumerate(pending):
+        if time.monotonic() > deadline:
+            ran_out_of_time = len(pending) - i
+            break
         status, body = post_message(msg, phone_received_at)
         if status == 200:
             ok += 1
+            if confirms_stored(body):
+                confirmed.add(message_key(msg))
+                newly_confirmed += 1
         else:
             failed += 1
             print(f"  FAILED (status={status}): {msg[:80]!r} -> {body[:200]}", file=sys.stderr)
 
-    print(f"{datetime.utcnow().isoformat()}Z: done. {ok} OK, {failed} failed")
+    if newly_confirmed:
+        save_ledger(confirmed)
+
+    summary = f"done. {ok} OK, {failed} failed, {already} already confirmed"
+    if newly_confirmed:
+        summary += f", {newly_confirmed} newly confirmed"
+    if ran_out_of_time:
+        summary += f", {ran_out_of_time} deferred to the next run (budget reached)"
+    print(f"{datetime.utcnow().isoformat()}Z: {summary}")
 
     # Heartbeat: a successful chat.db read + re-sync. The app flags ingestion
     # as stale (banner) if this stops arriving, so an outage can't hide.
