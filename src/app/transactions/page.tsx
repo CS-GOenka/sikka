@@ -432,16 +432,36 @@ async function pageContaining(id: number, sort: SortKey, dir: SortDir): Promise<
     : target.raw_messages?.phone_received_at ?? null;
   if (key === null) return null;
 
-  // Rows strictly ahead of this one. The id tiebreak the list sorts on is not
-  // reproduced here: at most a page boundary is off by the number of rows
-  // sharing this exact key, which for a timestamp is none.
+  // Rows strictly ahead of this one, under the same sort.
+  //
+  // Two of the four sort keys live on an embedded table, and those cannot be
+  // filtered through the column name the ORDER clause uses - PostgREST wants
+  // the embed declared !inner in the select and the filter written against the
+  // embedded path. Getting this wrong fails the request outright rather than
+  // returning a wrong number, which is how it was caught.
+  //
+  // The id tiebreak the list sorts on is not reproduced: at most the page is
+  // off by the number of rows sharing this exact key, which for a timestamp is
+  // none.
+  const embed =
+    sort === "date" ? "raw_messages!inner(phone_received_at)"
+    : sort === "category" ? "categories!inner(name)"
+    : null;
+  const filterPath =
+    sort === "date" ? "raw_messages.phone_received_at"
+    : sort === "category" ? "categories.name"
+    : sort === "amount" ? "amount"
+    : "payee";
+
   let ahead = supabase
     .from("transactions")
-    .select("id", { count: "exact", head: true })
+    .select(embed ? `id, ${embed}` : "id", { count: "exact", head: true })
     .neq("type", "ignored");
-  const column = SORT_COLUMN[sort];
-  ahead = ascending ? ahead.lt(column, key) : ahead.gt(column, key);
+  ahead = ascending ? ahead.lt(filterPath, key) : ahead.gt(filterPath, key);
   const { count, error } = await ahead;
-  if (error || count === null) return null;
+  if (error || count === null) {
+    console.error("Could not place transaction", id, "in the list:", error?.message);
+    return null;
+  }
   return Math.floor(count / PAGE_SIZE) + 1;
 }
