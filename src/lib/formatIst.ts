@@ -74,3 +74,49 @@ export function istAxisDay(ms: number): string {
 export function istWeekdayDate(ms: number): string {
   return WEEKDAY_DATE.format(ms);
 }
+
+// IST has no daylight saving, so a calendar day is a fixed 5h30m shift from
+// UTC and "which IST day is this instant on" is a division rather than a
+// formatter round-trip.
+const IST_OFFSET_MS = 330 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function istDayIndex(ms: number): number {
+  return Math.floor((ms + IST_OFFSET_MS) / DAY_MS);
+}
+
+/**
+ * Whole IST calendar days between an instant and now.
+ *
+ * Counted in calendar days rather than elapsed hours, because that is what a
+ * reader means by "two days ago": something from late last night is a day old
+ * this morning, not zero days old for another fourteen hours. Returns null for
+ * a missing or unparseable timestamp so callers can say nothing rather than
+ * say "0 days".
+ */
+export function istAgeInDays(iso: string | null, nowMs: number = Date.now()): number | null {
+  if (!iso) return null;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  return Math.max(0, istDayIndex(nowMs) - istDayIndex(then));
+}
+
+/** "today", "1 day", "12 days" - the age half of a "13 Sept · 12 days" label. */
+export function formatAge(days: number | null): string | null {
+  if (days === null) return null;
+  if (days === 0) return "today";
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+/**
+ * "13 Sept · 12 days" - a dated thing and how long it has been sitting there.
+ * Null when there is no usable timestamp, so the caller renders nothing at all
+ * rather than an em dash standing in for a date.
+ */
+export function istDateWithAge(iso: string | null, nowMs: number = Date.now()): string | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  const age = formatAge(istAgeInDays(iso, nowMs));
+  return age ? `${istDayMonth(ms)} · ${age}` : istDayMonth(ms);
+}

@@ -1,12 +1,18 @@
 /**
- * Rupees with Indian digit grouping (1,61,857 - not 161,857).
+ * Rupees with Indian digit grouping (1,61,857 - not 161,857), always to the
+ * paisa: ₹106.90, never ₹106.9 and never ₹107.
  *
- * Defaults to whole rupees: the dashboard's job is to be read at a glance, and
- * paise are noise at that size. Callers that must be exact - the budget push,
- * which quotes a specific transaction - pass 2.
+ * Both fraction digits are pinned, not just the maximum. With only a maximum,
+ * toLocaleString drops a trailing zero and an amount that is exact to the
+ * paisa renders a digit shorter than its neighbours, which breaks the column
+ * in any tabular-nums list and reads as a different precision rather than the
+ * same number.
  */
-export function formatInr(amount: number, maximumFractionDigits = 0): string {
-  return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits })}`;
+export function formatInr(amount: number, fractionDigits = 2): string {
+  return `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}`;
 }
 
 /**

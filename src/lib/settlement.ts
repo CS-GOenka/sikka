@@ -14,6 +14,8 @@ export interface SettlementLine {
   person: string;
   share: number;
   status: LineStatus;
+  /** When the line was raised - what dates it and makes it ageable. */
+  createdAt: string | null;
 }
 
 /** A transaction as the settlement maths needs to see it. */
@@ -102,7 +104,7 @@ export function groupOwed(group: SettlementGroup): number {
  * pot-manager case - is therefore born closed, which is right: there is nobody
  * to chase.
  */
-export function deriveStatus(lines: SettlementLine[]): GroupStatus {
+export function deriveStatus(lines: Pick<SettlementLine, "status">[]): GroupStatus {
   return lines.some((l) => l.status === "open") ? "open" : "closed";
 }
 

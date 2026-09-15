@@ -17,12 +17,22 @@ import type { CategoryOption } from "@/lib/gemini";
 export function GroupEditor({
   groupId,
   categoryId,
+  resolvedCategoryLabel,
   categories,
   members,
   candidates,
 }: {
   groupId: number;
   categoryId: number | null;
+  /**
+   * The category the group actually files under right now, already resolved.
+   * The picker names that, and only that. How an unset category gets resolved
+   * is a backend rule, and putting the rule on screen ("largest transaction's
+   * category") asked the reader to evaluate it against their own data to find
+   * out what their group is filed as - which is the one thing they came here
+   * to read.
+   */
+  resolvedCategoryLabel: string;
   categories: CategoryOption[];
   members: { id: number; label: string }[];
   candidates: { id: number; label: string }[];
@@ -86,7 +96,7 @@ export function GroupEditor({
           }
           className="rounded-xl border border-[var(--sk-hair-strong)] bg-[var(--sk-surface)] px-3 py-2 text-sm"
         >
-          <option value="">Largest transaction&apos;s category</option>
+          <option value="">{resolvedCategoryLabel}</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.parentName ? `${c.parentName} › ${c.name}` : c.name}

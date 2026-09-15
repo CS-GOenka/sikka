@@ -33,7 +33,7 @@ export type RowData = {
 function formatAmountCompact(amount: number | null, currency: string, type: string): string {
   if (amount === null) return "—";
   const sign = type === "debit" ? "−" : type === "credit" ? "+" : "";
-  const n = amount.toLocaleString("en-IN");
+  const n = amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return currency === "INR" ? `${sign}₹${n}` : `${sign}${currency} ${n}`;
 }
 

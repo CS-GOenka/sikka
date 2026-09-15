@@ -22,7 +22,7 @@ import { startTiming } from "@/lib/timing";
 // Fires when a debit is confirmed as a credit-card bill payment (in either
 // arrival order), so the user gets a positive "payment received" signal.
 async function fireCcPaymentSuccessPush(amount: number | null): Promise<void> {
-  const amt = amount != null ? `₹${amount.toLocaleString("en-IN")}` : "A payment";
+  const amt = amount != null ? `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "A payment";
   try {
     await sendPushToAll({
       title: "✅ Credit card payment received",

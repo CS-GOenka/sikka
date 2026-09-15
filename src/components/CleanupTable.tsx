@@ -111,7 +111,7 @@ export function CleanupTable({
                   <td className="px-3 py-2">{row.payee}</td>
                   <td className="px-3 py-2 text-zinc-500">{row.txCount}</td>
                   <td className="whitespace-nowrap px-3 py-2 font-medium">
-                    {row.totalInr.toLocaleString("en-IN")}
+                    {row.totalInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-zinc-500">{row.firstDate ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-zinc-500">{row.lastDate ?? "—"}</td>

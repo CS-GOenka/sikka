@@ -14,7 +14,7 @@ interface GroupRow {
   status: "open" | "closed";
   created_at: string;
   category_id: number | null;
-  settlement_lines: { id: number; person: string; share: number; status: "open" | "settled" }[];
+  settlement_lines: { id: number; person: string; share: number; status: "open" | "settled"; created_at: string | null }[];
   transactions: {
     id: number; type: string; status: string | null; currency: string;
     amount: number | null; category_id: number | null;
@@ -24,7 +24,7 @@ interface GroupRow {
 
 const SELECT =
   "id, name, status, created_at, category_id, " +
-  "settlement_lines(id, person, share, status), " +
+  "settlement_lines(id, person, share, status, created_at), " +
   "transactions(id, type, status, currency, amount, category_id, raw_messages(phone_received_at))";
 
 function toGroup(row: GroupRow): SettlementGroup {
@@ -36,6 +36,7 @@ function toGroup(row: GroupRow): SettlementGroup {
     categoryId: row.category_id,
     lines: (row.settlement_lines ?? []).map((l) => ({
       id: l.id, person: l.person, share: Number(l.share), status: l.status,
+      createdAt: l.created_at ?? null,
     })),
     transactions: (row.transactions ?? []).map((t) => ({
       id: t.id, type: t.type, status: t.status, currency: t.currency,
@@ -147,7 +148,7 @@ export async function recomputeGroupStatus(groupId: number): Promise<void> {
     console.error(`Failed to read lines for group ${groupId}:`, error.message);
     return;
   }
-  const status = deriveStatus((data ?? []).map((l) => ({ id: 0, person: "", share: 0, status: l.status })));
+  const status = deriveStatus(data ?? []);
   const { error: upErr } = await supabase
     .from("settlement_groups")
     .update({ status, closed_at: status === "closed" ? new Date().toISOString() : null })

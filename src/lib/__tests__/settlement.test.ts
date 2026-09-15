@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   deriveStatus, groupAnchor, groupCategory, groupGross, groupNet, groupOwed,
   groupShares, groupSpendContribution, reconcile, type SettlementGroup,
+  type SettlementLine,
 } from "../settlement.ts";
 
 // groupShares is what the group card subtracts on screen, so it is asserted
@@ -22,13 +23,16 @@ const group = (over: Partial<SettlementGroup> = {}): SettlementGroup => ({
   id: 1, name: "Group", status: "open", createdAt: "2026-08-20T10:00:00.000Z",
   categoryId: null, transactions: [], lines: [], ...over,
 });
+const line = (over: Partial<SettlementLine> & { id: number; person: string; share: number }): SettlementLine => ({
+  status: "open", createdAt: "2026-08-20T10:00:00.000Z", ...over,
+});
 
 describe("the dinner case - I fronted a shared cost", () => {
   // I paid Rs 5,000; four people owe Rs 1,000 each; my share is Rs 1,000.
   const dinner = group({
     name: "Dinner",
     transactions: [txn({ amount: 5000 })],
-    lines: [1, 2, 3, 4].map((i) => ({ id: i, person: `P${i}`, share: 1000, status: "open" as const })),
+    lines: [1, 2, 3, 4].map((i) => line({ id: i, person: `P${i}`, share: 1000 })),
   });
 
   test("gross is what left my account", () => {
@@ -76,8 +80,8 @@ describe("the dinner case - I fronted a shared cost", () => {
     const uneven = group({
       transactions: [txn({ amount: 5000 })],
       lines: [
-        { id: 1, person: "A", share: 1200, status: "open" },
-        { id: 2, person: "B", share: 800, status: "open" },
+        line({ id: 1, person: "A", share: 1200 }),
+        line({ id: 2, person: "B", share: 800 }),
       ],
     });
     assert.equal(groupNet(uneven), 3000);
@@ -211,7 +215,7 @@ describe("reconciliation is advisory", () => {
   test("warns only when shares exceed what was actually spent", () => {
     const g = group({
       transactions: [txn({ amount: 1000 })],
-      lines: [{ id: 1, person: "A", share: 1500, status: "open" }],
+      lines: [line({ id: 1, person: "A", share: 1500 })],
     });
     const w = reconcile(g);
     assert.equal(w?.kind, "shares-exceed-gross");
@@ -228,7 +232,7 @@ describe("rounding", () => {
   test("nets land on whole paisa", () => {
     const g = group({
       transactions: [txn({ amount: 3321.53 }), txn({ id: 2, type: "credit", amount: 1107.18 })],
-      lines: [{ id: 1, person: "A", share: 738.11, status: "open" }],
+      lines: [line({ id: 1, person: "A", share: 738.11 })],
     });
     const net = groupNet(g);
     assert.equal(net, Math.round(net * 100) / 100);

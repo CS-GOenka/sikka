@@ -29,7 +29,7 @@ type CaptureRow = {
 function formatAmount(amount: number | null, currency: string, type: string) {
   if (amount === null) return "—";
   const sign = type === "debit" ? "-" : type === "credit" ? "+" : "";
-  return `${sign}${currency} ${amount.toLocaleString("en-IN")}`;
+  return `${sign}${currency} ${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export default async function CaptureCheckPage({

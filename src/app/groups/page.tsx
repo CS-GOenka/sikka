@@ -2,7 +2,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { fetchSettlementGroups } from "@/lib/settlementData";
 import {
-  groupCategory, groupGross, groupNet, groupOwed, groupShares,
+  groupAnchor, groupCategory, groupGross, groupNet, groupOwed, groupShares,
   groupSpendContribution, reconcile, type SettlementGroup,
 } from "@/lib/settlement";
 import type { CategoryOption } from "@/lib/gemini";
@@ -12,7 +12,7 @@ import { UndoBanner } from "@/components/UndoBanner";
 import { fetchLastUndoable } from "@/lib/settlementUndo";
 import { getAssignableCategories } from "@/lib/gemini";
 import { formatInr } from "@/lib/formatInr";
-import { istDateTime } from "@/lib/formatIst";
+import { istDateTime, istDateWithAge } from "@/lib/formatIst";
 import { startTiming } from "@/lib/timing";
 
 export const dynamic = "force-dynamic";
@@ -134,8 +134,15 @@ function GroupCard({
   const owed = groupOwed(group);
   const warning = reconcile(group);
   const hasPeople = group.lines.length > 0;
+  // The resolved category - the one the pie actually uses - whether it was
+  // picked by hand or derived. How it was arrived at is the backend's business;
+  // the screen shows the answer, not the reasoning.
+  const resolvedCategoryId = groupCategory(group);
   const categoryLabel =
-    groupCategory(group) != null ? categoryNames.get(groupCategory(group) as number) ?? "—" : "Uncategorised";
+    resolvedCategoryId != null ? categoryNames.get(resolvedCategoryId) ?? "—" : "Uncategorised";
+  // Earliest transaction, per groupAnchor: it is when the shared cost started,
+  // and unlike the latest it does not move as more transactions are added.
+  const dated = istDateWithAge(groupAnchor(group));
   const members = group.transactions.map((t) => ({
     id: t.id,
     label: `${t.type === "credit" ? "+" : "−"}${formatInr(t.amount ?? 0)} ${payees.get(t.id) ?? "—"}`,
@@ -153,15 +160,25 @@ function GroupCard({
             {group.transactions.length} transaction{group.transactions.length === 1 ? "" : "s"}
             {" · "}{categoryLabel}
             {hasPeople && ` · ${group.lines.length} ${group.lines.length === 1 ? "person" : "people"}`}
+            {dated && ` · ${dated}`}
           </p>
         </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.6875rem] font-semibold ${
-          group.status === "open"
-            ? "bg-[var(--sk-accent-tint)] text-[var(--sk-accent-ink)]"
-            : "bg-[var(--sk-good-tint)] text-[var(--sk-good)]"
-        }`}>
-          {group.status === "open" ? `${formatInr(owed)} owed` : "Settled"}
-        </span>
+        {/* Owed stays the headline - it is the number with something still to
+            do about it. The net sits under it in small type because it answers
+            a different question: not what is outstanding, but what the evening
+            actually cost me once everyone else's share is taken out. */}
+        <div className="flex shrink-0 flex-col items-end gap-0.5">
+          <span className={`rounded-full px-2.5 py-1 text-[0.6875rem] font-semibold ${
+            group.status === "open"
+              ? "bg-[var(--sk-accent-tint)] text-[var(--sk-accent-ink)]"
+              : "bg-[var(--sk-good-tint)] text-[var(--sk-good)]"
+          }`}>
+            {group.status === "open" ? `${formatInr(owed)} owed` : "Settled"}
+          </span>
+          <span className="text-[0.6875rem] tabular-nums text-[var(--sk-ink-3)]">
+            {net <= 0 ? `${signedInr(net)} net to you` : `${formatInr(net)} yours`}
+          </span>
+        </div>
       </div>
 
       {hasPeople ? (
@@ -171,7 +188,16 @@ function GroupCard({
         <ul className="mt-4 flex flex-col">
           {group.lines.map((l) => (
             <li key={l.id} className="flex items-center gap-3 border-b border-[var(--sk-hair)] py-2.5 last:border-b-0">
-              <span className="min-w-0 flex-1 truncate text-sm text-[var(--sk-ink)]">{l.person}</span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm text-[var(--sk-ink)]">{l.person}</span>
+                {/* Only while it is open. Once settled the age has stopped
+                    meaning anything - nobody is waiting on it. */}
+                {l.status === "open" && istDateWithAge(l.createdAt) && (
+                  <span className="text-[0.6875rem] tabular-nums text-[var(--sk-ink-3)]">
+                    {istDateWithAge(l.createdAt)}
+                  </span>
+                )}
+              </span>
               <span className={`shrink-0 text-sm font-medium tabular-nums ${
                 l.status === "settled" ? "text-[var(--sk-ink-3)] line-through" : "text-[var(--sk-ink)]"
               }`}>
@@ -254,6 +280,7 @@ function GroupCard({
       <GroupEditor
         groupId={group.id}
         categoryId={group.categoryId}
+        resolvedCategoryLabel={categoryLabel}
         categories={categories}
         members={members}
         candidates={candidates}
