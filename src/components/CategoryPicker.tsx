@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { startTransition, useState } from "react";
 import type { CategoryOption } from "@/lib/gemini";
 import { setTransactionCategory } from "@/lib/setCategory";
 
@@ -62,7 +62,13 @@ export function CategoryPicker({
       // queue once it is categorised, and the dashboard's totals move.
       setSaved(category);
       setPending(false);
-      router.refresh();
+      // The refresh has to be marked non-urgent explicitly. router.refresh()
+      // schedules a transition of its own, and React will happily hold the two
+      // urgent updates above inside it - which put the control right back to
+      // disabled and "Saving…" until the refetch resolved, the exact wait this
+      // was meant to remove. Handing it to startTransition lets the optimistic
+      // value commit first and the refresh settle behind it.
+      startTransition(() => router.refresh());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save category");
       setSaved(null);
