@@ -14,8 +14,14 @@
  * difference between reading two senders' transaction mail and reading two
  * senders' mail.
  */
+// ICICI migrated domains in April 2026: credit_cards@icicibank.com stops on
+// 8 April 2026 and credit_cards@icici.bank.in starts on the 13th, with the same
+// subject line either side. The old address is kept because a query that only
+// knows the new one silently reads nothing if the bank ever reverts, and because
+// this same query is what the 24-month backfill re-runs.
 export const ICICI_SENDERS = [
   "credit_cards@icici.bank.in",
+  "credit_cards@icicibank.com",
   "customernotification@icici.bank.in",
 ] as const;
 
