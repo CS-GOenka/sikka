@@ -31,8 +31,12 @@
 // would have carried, after stripping a "UPI-<ref>-" prefix. Keying on the full
 // email string instead fragments the cache badly - measured against this
 // mailbox, 60 distinct new keys rather than 5, with Swiggy split across six of
-// them. The full string is still what gets STORED as the payee, so the display
-// keeps the better name while the key keeps the shared one.
+// them.
+//
+// Three fields, three jobs. payee_email holds exactly what the bank wrote. payee
+// holds the display name - payee_email with any "UPI-<ref>-" prefix stripped,
+// because a one-time reference number is not a merchant and must never show up
+// in a list of places money went. The cache key is the truncation.
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import { payeeKey } from "../src/lib/payeeKey.ts";
@@ -44,6 +48,11 @@ const env = Object.fromEntries(
 );
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 const APPLY = process.argv.includes("--apply");
+// --only=<gmail_message_id>[,...] restricts the run. A 24-month backfill is not
+// one decision: the September rows were corroborated by chat.db, the older ones
+// by an available-limit chain, and those were approved separately.
+const onlyArg = process.argv.find((a) => a.startsWith("--only="));
+const ONLY = onlyArg ? new Set(onlyArg.slice("--only=".length).split(",").map((x) => x.trim()).filter(Boolean)) : null;
 
 const TEN_MIN = 10 * 60 * 1000;
 const istDate = (ms) => new Date(Number(ms)).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -155,7 +164,10 @@ const plan = noMatch.map(({ r }) => {
     amount: Number(r.amount),
     transaction_date: istDate(r.internal_date),
     card_or_account: `XX${r.card_last4}`,
-    payee: r.payee_email,
+    payee_email: r.payee_email,
+    // stripUpi turns "UPI-662216952359-LOCO BEA" into "LOCO BEA"; a bare
+    // reference would otherwise become a merchant-list entry of its own.
+    payee: stripUpi(r.payee_email) || r.payee_email,
     key,
     keyExists: !!hit,
     category_id: hit?.category_id ?? null,
@@ -165,10 +177,24 @@ const plan = noMatch.map(({ r }) => {
   };
 });
 
+const selected = ONLY ? plan.filter((p) => ONLY.has(p.gmail_message_id)) : plan;
+if (ONLY) {
+  const missing = [...ONLY].filter((id) => !plan.some((p) => p.gmail_message_id === id));
+  console.log(`--only: ${selected.length} of ${plan.length} candidates selected` +
+    (missing.length ? `; ${missing.length} requested id(s) are not candidates: ${missing.join(", ")}` : ""));
+  const held = plan.filter((p) => !ONLY.has(p.gmail_message_id));
+  if (held.length) {
+    console.log(`held back (${held.length}):`);
+    for (const p of held) console.log(`    ${p.transaction_date}  INR ${String(p.amount).padStart(9)}  ${p.payee}`);
+  }
+  console.log();
+}
+
 console.log("=== WOULD INSERT ===");
-if (!plan.length) console.log("  (nothing)");
-for (const p of plan) {
-  console.log(`  ${p.transaction_date}  ${p.card_or_account}  INR ${String(p.amount).padStart(9)}  ${JSON.stringify(p.payee)}`);
+if (!selected.length) console.log("  (nothing)");
+for (const p of selected) {
+  console.log(`  ${p.transaction_date}  ${p.card_or_account}  INR ${String(p.amount).padStart(9)}  payee ${JSON.stringify(p.payee)}`);
+  console.log(`      payee_email ${JSON.stringify(p.payee_email)}`);
   console.log(`      key ${JSON.stringify(p.key).padEnd(26)} in cache: ${p.keyExists ? `YES -> ${catName(p.category_id)} (${p.category_id}) [${p.confidence_source}]` : "NO  -> uncategorized"}`);
   console.log(`      method ${p.payment_method}   needs_category_review: true   gmail_message_id ${p.gmail_message_id}`);
 }
@@ -180,7 +206,7 @@ if (!APPLY) {
 }
 
 let inserted = 0;
-for (const p of plan) {
+for (const p of selected) {
   // raw_messages first: transactions.raw_message_id is NOT NULL, and this row
   // is where capture_source lives. The stored message is the email body, which
   // is the actual text this transaction was read out of.
@@ -201,7 +227,8 @@ for (const p of plan) {
     is_transfer: false,
     card_or_account: p.card_or_account,
     payee: p.payee,
-    note: p.payee,
+    payee_email: p.payee_email,
+    note: p.payee_email,
     amount: p.amount,
     currency: "INR",
     transaction_date: p.transaction_date,
@@ -218,4 +245,4 @@ for (const p of plan) {
   console.log(`  inserted txn ${tx.id}  raw_message ${rm.id}  INR ${p.amount}  ${p.payee}`);
   inserted++;
 }
-console.log(`\ninserted: ${inserted} of ${plan.length}`);
+console.log(`\ninserted: ${inserted} of ${selected.length}`);
