@@ -16,9 +16,17 @@
 // model to guess again. For "book my forex p" that answer was entered by hand.
 //
 // So each new key is seeded with the category its SMS twin already has, marked
-// confidence_source='alias' to record that it was inherited rather than
-// observed. An existing row is never touched: 'alias' is the weakest claim in
-// the table, and it must never outrank a human.
+// confidence_source='hardcoded' - the same label the rule-based branch of
+// categorize.ts uses, chosen because it reads as "put here by a rule, not by
+// evidence" and because nothing on the read path treats it specially: a seeded
+// row is found by the ordinary cache lookup and reported as source 'cache'.
+//
+// The cost of that label is traceability. These 13 become indistinguishable
+// from the 5 rows the real hardcoded rules (paan shops, investments) wrote, so
+// the only record of which is which is this script's list.
+//
+// An existing row is never touched, whatever its source. An inherited category
+// is the weakest claim in the table and must never outrank a human's.
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 
@@ -75,7 +83,7 @@ for (const [newKey, sourceKey] of ALIAS_PAIRS) {
   if (already) {
     // Never overwrite. A manual row is a human decision and outranks everything
     // here; an llm row is at least a real observation of this exact spelling,
-    // which an inherited guess is not.
+    // which an inherited guess is not. Re-running is therefore a no-op.
     skipped++;
     console.log(`  KEEP  ${newKey.padEnd(23)} already ${catName(already.category_id)} / ${already.confidence_source} - not overwritten`);
     continue;
@@ -85,7 +93,7 @@ for (const [newKey, sourceKey] of ALIAS_PAIRS) {
     const { error: insErr } = await sb.from("merchant_categories").insert({
       payee: newKey,
       category_id: source.category_id,
-      confidence_source: "alias",
+      confidence_source: "hardcoded",
       updated_at: new Date().toISOString(),
     });
     if (insErr) { console.error(`        FAILED: ${insErr.message}`); continue; }
