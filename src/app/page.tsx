@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
-import { getAssignableCategories } from "@/lib/gemini";
-import { fetchSettlementGroups, owedSummary } from "@/lib/settlementData";
+import { deriveAssignableCategories } from "@/lib/gemini";
+import { fetchSettlementGroupsResult, owedSummary } from "@/lib/settlementData";
 import { fetchPendingRejections } from "@/lib/rejectedCaptures";
 import { fetchQualifyingSpendRows, getBudgetSettings } from "@/lib/budget";
 import { clampOffset, dashboardFetchWindows, periodComparisons } from "@/lib/periods";
@@ -43,7 +43,25 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
 }
 
 async function renderDashboard(params: Record<string, string | string[] | undefined>) {
-  const { dayResetHour } = await getBudgetSettings();
+  // Two round trips, not six. Everything that does not depend on the day-reset
+  // hour is loaded alongside it, and the spend windows - the only part that
+  // needs the resolved periods - follow in a single second wave.
+  //
+  // This screen used to await five things in series: the settings, then the
+  // windows, then the settlement groups, then the pending rejections, with
+  // each window separately re-reading the groups inside fetchQualifyingSpendRows.
+  // Every one of those hops costs a full round trip to the database, so the
+  // shape of the waiting mattered far more than the queries themselves.
+  const [{ dayResetHour }, groupsResult, { data: categoryRows, error: categoryError }, rejections] =
+    await Promise.all([
+      getBudgetSettings(),
+      fetchSettlementGroupsResult(),
+      supabase.from("categories").select("id, name, parent_id").returns<
+        { id: number; name: string; parent_id: number | null }[]
+      >(),
+      fetchPendingRejections(),
+    ]);
+
   const periods = periodComparisons(dayResetHour, {
     day: readOffset(params, "do"),
     week: readOffset(params, "wo"),
@@ -52,20 +70,20 @@ async function renderDashboard(params: Record<string, string | string[] | undefi
 
   // One query per contiguous span the screen needs, rather than one per window:
   // at rest the six windows overlap into a single span, and they only separate
-  // when the stepper has walked a period away from today.
+  // when the stepper has walked a period away from today. The groups fetched
+  // above are handed to each window so they all agree on what is live, and so
+  // the list is read once rather than once per window.
+  const windowRows = await Promise.all(
+    dashboardFetchWindows(periods).map((w) => fetchQualifyingSpendRows(w, groupsResult))
+  );
+
   // Two category shapes are needed and they are genuinely different: the whole
   // tree (parents included) drives the colour map, while the picker offers only
-  // assignable leaves - the same list /review and /transactions use.
-  const [windowRows, { data: categoryRows, error: categoryError }, assignableCategories] =
-    await Promise.all([
-      Promise.all(dashboardFetchWindows(periods).map(fetchQualifyingSpendRows)),
-      supabase.from("categories").select("id, name, parent_id").returns<
-        { id: number; name: string; parent_id: number | null }[]
-      >(),
-      getAssignableCategories(),
-    ]);
-  const owed = owedSummary(await fetchSettlementGroups());
-  const rejections = await fetchPendingRejections();
+  // assignable leaves - the same list /review and /transactions use. Both are
+  // derived from the one read above; asking the database twice for the same
+  // rows to get two views of them was pure latency.
+  const assignableCategories = deriveAssignableCategories(categoryRows ?? []);
+  const owed = owedSummary(groupsResult.groups);
   // Merged windows can still abut, and a row could in principle be returned by
   // two of them, so the rows are keyed by id before anything sums them.
   const spendRows = [...new Map(windowRows.flat().map((r) => [r.id, r])).values()];

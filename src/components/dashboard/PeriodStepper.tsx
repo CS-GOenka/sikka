@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useTransition } from "react";
+import { useEffect, useTransition } from "react";
 
 /**
  * Steps the selected week or month one period at a time, with the comparison
@@ -29,16 +29,35 @@ export function PeriodStepper({
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
 
-  function step(by: number) {
+  function href(by: number) {
     const next = new URLSearchParams(params.toString());
     const value = offset + by;
     if (value === 0) next.delete(paramKey);
     else next.set(paramKey, String(value));
     const query = next.toString();
+    return query ? `/?${query}` : "/";
+  }
+
+  // Warm the periods on either side. Stepping is the one dashboard control
+  // that cannot be answered from what the page already holds - the rows for
+  // another month were never fetched - so the render it triggers is a full
+  // server round trip. Asking for it while the reader is still looking at the
+  // current period turns most of that wait into no wait at all.
+  //
+  // Both directions, because walking back through the months and then
+  // forwards again is the ordinary way this gets used.
+  useEffect(() => {
+    router.prefetch(href(-1));
+    if (canStepForward) router.prefetch(href(1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramKey, offset, canStepForward, params]);
+
+  function step(by: number) {
+    const query = href(by);
     startTransition(() => {
       // scroll:false so stepping doesn't throw the reader back to the top of
       // the page each time they walk backwards through the months.
-      router.push(query ? `/?${query}` : "/", { scroll: false });
+      router.push(query, { scroll: false });
     });
   }
 

@@ -115,14 +115,19 @@ function countsAsSpend(row: { category_id: number | null; categories: { counts_a
 // created_at is deliberately NOT used - it reflects when a row was inserted,
 // which is wrong for backfilled/reconciled data. The !inner join makes the
 // phone_received_at range filter restrict the transactions, not just the embed.
-export async function fetchQualifyingSpendRows(window: {
-  startISO: string;
-  endISO: string;
-}): Promise<SpendRow[]> {
+export async function fetchQualifyingSpendRows(
+  window: { startISO: string; endISO: string },
+  // Callers that need several windows should load the groups once and hand
+  // them in. The dashboard asks for up to three windows and used to pay for a
+  // settlement_groups round trip inside each one, then a fourth for the "owed"
+  // banner - four identical queries, one of them serial, for a list that
+  // cannot change between them.
+  preloadedGroups?: { groups: SettlementGroup[]; ok: boolean }
+): Promise<SpendRow[]> {
   // Groups are loaded once and used twice: to know which transactions are
   // spoken for, and to emit their nets. Loading them separately in each half
   // would let the two disagree about what a live group is.
-  const { groups, ok } = await fetchSettlementGroupsResult();
+  const { groups, ok } = preloadedGroups ?? (await fetchSettlementGroupsResult());
   const [ungrouped, grouped] = await Promise.all([
     fetchUngroupedSpendRows(window, groups, ok),
     fetchGroupedSpendRows(window, groups),

@@ -26,14 +26,21 @@ export type CategoryOption = {
 // result.
 const ACTION_CATEGORY_NAMES = new Set(["Ignore"]);
 
-// Only "leaf" categories (no children) are offered to the model - parent
-// categories that have children (e.g. "Food & Dining") are just grouping
-// labels, and the more specific child should be picked instead.
-async function fetchAssignableCategories(): Promise<CategoryOption[]> {
-  const { data: all, error } = await supabase.from("categories").select("id, name, parent_id");
-  if (error) {
-    throw new Error(`Failed to fetch categories: ${error.message}`);
-  }
+/**
+ * The assignable-leaf view of a category list that has already been read.
+ *
+ * Only "leaf" categories (no children) are offered: parent categories that
+ * have children (e.g. "Food & Dining") are just grouping labels, and the more
+ * specific child should be picked instead.
+ *
+ * Split out from the query so a page holding the whole tree for its own
+ * reasons can derive the picker's options from those same rows. The dashboard
+ * needs both shapes and used to issue the identical
+ * `select("id, name, parent_id")` twice in one render to get them.
+ */
+export function deriveAssignableCategories(
+  all: { id: number; name: string; parent_id: number | null }[]
+): CategoryOption[] {
   const parentIds = new Set(all.filter((c) => c.parent_id !== null).map((c) => c.parent_id));
   const byId = new Map(all.map((c) => [c.id, c]));
   return all
@@ -43,6 +50,14 @@ async function fetchAssignableCategories(): Promise<CategoryOption[]> {
       name: c.name,
       parentName: c.parent_id ? byId.get(c.parent_id)?.name ?? null : null,
     }));
+}
+
+async function fetchAssignableCategories(): Promise<CategoryOption[]> {
+  const { data: all, error } = await supabase.from("categories").select("id, name, parent_id");
+  if (error) {
+    throw new Error(`Failed to fetch categories: ${error.message}`);
+  }
+  return deriveAssignableCategories(all);
 }
 
 // Read live, deliberately uncached. This was previously wrapped in a

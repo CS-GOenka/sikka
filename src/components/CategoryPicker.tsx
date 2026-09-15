@@ -24,6 +24,10 @@ export function CategoryPicker({
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What this picker should show once the save has landed, ahead of the server
+  // sending the page back. Null means "whatever the server last said".
+  const [saved, setSaved] = useState<string | null>(null);
+  const shown = saved ?? currentCategoryName;
 
   // "Ignore" is an action (dismiss from the review queue), not a spending
   // category - kept out of the alphabetical group list and pinned to its
@@ -41,15 +45,27 @@ export function CategoryPicker({
 
   async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const category = e.target.value;
-    if (!category || category === currentCategoryName) return;
+    if (!category || category === shown) return;
 
     setPending(true);
     setError(null);
     try {
       await setTransactionCategory(transactionId, category);
+      // The write is what the user is waiting on; the refresh is not. It used
+      // to be both: `pending` was only ever cleared on the error path, so the
+      // control stayed disabled and read "Saving…" until a full re-render of
+      // the page came back - a second server round trip, and on /transactions
+      // a re-fetch of all fifty rows to change one cell.
+      //
+      // So the picker settles on the saved value straight away and the refresh
+      // runs behind it. It is still needed: /review drops a row out of the
+      // queue once it is categorised, and the dashboard's totals move.
+      setSaved(category);
+      setPending(false);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save category");
+      setSaved(null);
       setPending(false);
     }
   }
@@ -61,12 +77,12 @@ export function CategoryPicker({
           className={`w-full min-w-0 rounded border border-zinc-300 bg-white disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 ${
             compact ? "px-1 py-1 text-[11px] sm:text-xs" : "px-2 py-1 text-sm"
           }`}
-          value={currentCategoryName ?? ""}
+          value={shown ?? ""}
           disabled={pending}
           onChange={handleChange}
         >
           <option value="" disabled>
-            {currentCategoryName ?? "Uncategorized"}
+            {shown ?? "Uncategorized"}
           </option>
           {ignoreOption && (
             <optgroup label="Actions">
