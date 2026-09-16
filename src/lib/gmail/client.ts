@@ -88,15 +88,28 @@ export class HistoryTooOldError extends Error {
   }
 }
 
+// Does a 400 from history.list blame the cursor?
+//
+// Google spells the field three ways depending on which layer rejects it:
+// "historyId" and "startHistoryId" in prose, and "start_history_id" in the proto
+// validator, which is the one an unparseable value actually hits:
+//   Invalid value at 'start_history_id' (TYPE_UINT64), "not-a-history-id"
+// The first version of this matched only the camelCase spellings, so a
+// corrupted cursor fell straight through as a generic error - and since the
+// cursor is only saved on a successful run, it would have stayed corrupted and
+// failed every fifteen minutes forever. Matching the separator loosely is the
+// whole fix.
+const CURSOR_COMPLAINT = /history[_\s-]?id/i;
+
 /**
  * Message ids added since `startHistoryId`.
  *
  * Gmail keeps roughly a week of history and is under no obligation to keep even
- * that. An expired cursor comes back as 404, and sometimes as a 400 complaining
- * about the id - both mean the same thing operationally, so both are folded into
- * HistoryTooOldError for the caller to answer with a date-range query instead.
- * Treating this as a generic failure would leave the poller retrying a cursor
- * that can never work again.
+ * that. An expired cursor comes back as 404 and an unusable one as a 400 - both
+ * mean "this cursor will never work again", so both are folded into
+ * HistoryTooOldError for the caller to answer with a date-range query. The
+ * distinction that matters is not why the cursor is bad but that no amount of
+ * retrying will fix it.
  */
 export async function listAddedMessageIds(startHistoryId: string, token: string): Promise<string[]> {
   const ids = new Set<string>();
@@ -116,7 +129,7 @@ export async function listAddedMessageIds(startHistoryId: string, token: string)
   } catch (err) {
     const status = (err as { status?: number }).status;
     const message = err instanceof Error ? err.message : String(err);
-    if (status === 404 || (status === 400 && /historyId|startHistoryId/i.test(message))) {
+    if (status === 404 || (status === 400 && CURSOR_COMPLAINT.test(message))) {
       throw new HistoryTooOldError(startHistoryId, message);
     }
     throw err;
