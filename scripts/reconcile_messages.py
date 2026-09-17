@@ -187,7 +187,18 @@ def fetch_recent_icici_messages():
 
 
 def post_message(message, phone_received_at):
-    body = json.dumps({"message": message, "phoneReceivedAt": phone_received_at}).encode()
+    # "source" is read two ways on the server. isManualCapture() decides whether
+    # the message text's own date may override phoneReceivedAt - it must NOT
+    # here, because this script reads the SMS's true arrival instant out of
+    # chat.db, which is authoritative even when it is days after the transaction
+    # date. And normalizeCaptureSource() stores it, so a row can say who made
+    # it. "reconcile" is not in the manual set, so declaring it changes no
+    # timing behaviour; it only stops this sender being anonymous.
+    body = json.dumps({
+        "message": message,
+        "phoneReceivedAt": phone_received_at,
+        "source": "reconcile",
+    }).encode()
     req = urllib.request.Request(
         INGEST_URL, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )

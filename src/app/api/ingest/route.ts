@@ -11,7 +11,7 @@ import {
 } from "@/lib/ccBillPaymentResolution";
 import { notifyBudgetForSpend, notifyCreditReceived } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
-import { isManualCapture, resolveReceivedAt } from "@/lib/receivedAt";
+import { isManualCapture, normalizeCaptureSource, resolveReceivedAt } from "@/lib/receivedAt";
 import { findExistingCapture } from "@/lib/duplicateCheck";
 import { supabaseDuplicateLookups } from "@/lib/duplicateLookups";
 import { convertTransaction, isConvertibleForeignCard } from "@/lib/fx";
@@ -63,6 +63,12 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
   // Whether this is a hand-shared message rather than a live SMS alert. The two
   // post identical shapes, so only the sender can say - see receivedAt.ts.
   const manualCapture = isManualCapture((body as { source?: unknown })?.source);
+  // The same field, kept rather than consumed. It used to be read for the
+  // receipt-time rule and then dropped, so the single most load-bearing fact
+  // about a capture - who made it - survived one request and nothing else. Null
+  // when the sender does not say; an undeclared capture is recorded as unknown,
+  // never guessed at here.
+  const captureSource = normalizeCaptureSource((body as { source?: unknown })?.source);
   // Set only by the "capture as separate" answer to a refused share. The user
   // has looked at the transaction and said it is genuinely distinct, which is
   // better evidence than any heuristic here - so every duplicate check is
@@ -225,7 +231,7 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
     try {
       const { data, error } = await supabase
         .from("raw_messages")
-        .insert({ message, phone_received_at: effectivePhoneReceivedAt })
+        .insert({ message, phone_received_at: effectivePhoneReceivedAt, capture_source: captureSource })
         .select("id")
         .single();
 

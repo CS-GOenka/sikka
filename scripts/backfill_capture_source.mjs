@@ -84,8 +84,20 @@ async function selectAll(table, columns) {
   }
 }
 
-const rows = await selectAll("raw_messages", "id, message, created_at, phone_received_at, transactions(transaction_date)");
-console.log(`${APPLY ? "APPLYING" : "DRY RUN"} - ${rows.length} raw_messages\n`);
+const everything = await selectAll(
+  "raw_messages",
+  "id, message, created_at, phone_received_at, capture_source, transactions(transaction_date)"
+);
+// A backfill fills gaps. It does not get an opinion about rows that already
+// carry a label, and the first version of this did - re-running it relabelled
+// all ten email-ingested rows as 'reconcile', because the poller writes them in
+// a batch with phone_received_at set to the email's own (old) internalDate,
+// which is exactly the shape the reconcile rule looks for. The heuristics here
+// are inference; a declared source is evidence, and inference must never
+// overwrite evidence.
+const rows = everything.filter((r) => r.capture_source == null);
+const alreadyLabelled = everything.length - rows.length;
+console.log(`${APPLY ? "APPLYING" : "DRY RUN"} - ${everything.length} raw_messages, ${alreadyLabelled} already labelled and left alone, ${rows.length} to consider\n`);
 
 // Texts that exist in this Mac's Messages database ONLY as an iMessage from a
 // personal number - never as an SMS from a bank shortcode. Read through python3
@@ -197,4 +209,4 @@ for (const [label, ids] of plan) {
   }
 }
 console.log(`  ${"(null)".padEnd(10)} ${String(left).padStart(4)} rows   left undetermined`);
-console.log(`\n${APPLY ? "labelled" : "would label"}: ${rows.length - left} of ${rows.length}`);
+console.log(`\n${APPLY ? "labelled" : "would label"}: ${rows.length - left} of ${rows.length} unlabelled (${alreadyLabelled} pre-existing labels untouched)`);

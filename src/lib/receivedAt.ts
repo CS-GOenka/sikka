@@ -40,6 +40,26 @@ export function isManualCapture(rawSource: unknown): boolean {
 }
 
 /**
+ * The declared sender, normalised to the four values raw_messages.capture_source
+ * accepts - or null when the sender said nothing.
+ *
+ * Every manual alias collapses to 'manual' because the distinction the column
+ * records is who made the capture, not which button they pressed. An
+ * unrecognised value becomes null rather than being stored: the CHECK
+ * constraint would reject it and fail the whole ingest, and losing a
+ * transaction to a typo in a label is a far worse trade than not knowing where
+ * it came from.
+ */
+const CAPTURE_SOURCES = new Set(["shortcut", "reconcile", "manual", "email"]);
+
+export function normalizeCaptureSource(rawSource: unknown): string | null {
+  if (typeof rawSource !== "string") return null;
+  const value = rawSource.trim().toLowerCase();
+  if (MANUAL_SOURCES.has(value)) return "manual";
+  return CAPTURE_SOURCES.has(value) ? value : null;
+}
+
+/**
  * Midday IST on the date parsed out of the message, or null when that date is
  * today, unparseable, or in the future.
  *
