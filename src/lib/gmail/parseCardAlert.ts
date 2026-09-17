@@ -28,6 +28,28 @@ export interface ParsedAlert {
 const num = (s: string | null | undefined): number | null =>
   s == null ? null : Number(String(s).replace(/,/g, ""));
 
+/**
+ * Which card an alert is about, from either spelling ICICI uses.
+ *
+ * Purchase alerts say "Credit Card XX2003". Bill-payment receipts say
+ * "Credit Card account 4315 XXXX XXXX 2003" - the same card, written as a
+ * masked PAN. Reading only the first spelling left card_last4 null on all 32
+ * payment rows, and a payment is the one event that RAISES the available limit,
+ * so the limit chain could not be reconciled without them. That is what forced
+ * the completeness figure to be reported as an upper bound rather than a
+ * measurement.
+ *
+ * The masked form takes the LAST group: the first four digits are the issuer
+ * BIN, which is identical across every card on the account and identifies
+ * nothing.
+ */
+const CARD_PLAIN = /Credit Card\s+XX(\d{4})/i;
+const CARD_MASKED = /\d{4}\s+X{4}\s+X{4}\s+(\d{4})/i;
+
+export function cardLast4(body: string): string | null {
+  return body.match(CARD_PLAIN)?.[1] ?? body.match(CARD_MASKED)?.[1] ?? null;
+}
+
 export function parseCardAlert(input: {
   id: string;
   internalDate: string | number;
@@ -38,12 +60,17 @@ export function parseCardAlert(input: {
     internal_date: Number(input.internalDate),
     raw_body: input.body,
   };
+  // Quarantined rows keep the card but lose every value that can be summed or
+  // spent. The point of nulling fields is that a quarantined row must never be
+  // mistaken for money moved; a card number is an identifier, not an amount, and
+  // knowing which card a bill payment landed on is what makes the limit chain
+  // reconcilable.
   const quarantine = (reason: string): ParsedAlert => ({
     ...base,
     status: "quarantine",
     quarantine_reason: reason,
     amount: null,
-    card_last4: null,
+    card_last4: cardLast4(input.body ?? ""),
     payee_email: null,
     available_limit: null,
   });
