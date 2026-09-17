@@ -12,6 +12,7 @@ import {
 import { notifyBudgetForSpend, notifyCreditReceived } from "@/lib/budget";
 import { normalizePhoneReceivedAt } from "@/lib/phoneReceivedAt";
 import { isManualCapture, normalizeCaptureSource, resolveReceivedAt } from "@/lib/receivedAt";
+import { extractAvailableLimit } from "@/lib/availableLimit";
 import { findExistingCapture } from "@/lib/duplicateCheck";
 import { supabaseDuplicateLookups } from "@/lib/duplicateLookups";
 import { convertTransaction, isConvertibleForeignCard } from "@/lib/fx";
@@ -286,6 +287,11 @@ async function handleIngest(request: NextRequest): Promise<NextResponse> {
       amount: classified.amount,
       currency: classified.currency,
       transaction_date: classified.transactionDate,
+      // The figure the alert leaves behind, stored so the NEXT capture can be
+      // compared against it. Two rows on one card reporting different limits
+      // cannot be the same charge - which is the only way to tell a repeat
+      // purchase from a re-capture once amount, date, card and merchant agree.
+      available_limit: extractAvailableLimit(message),
       // needs_category_review defaults to true at the DB level as a fail-safe
       // for a categorization step that fails partway. An "ignored" row has no
       // such step - categorization only runs for debit/credit, and nothing

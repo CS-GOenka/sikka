@@ -158,7 +158,7 @@ async function handle(request: NextRequest): Promise<NextResponse> {
     const sinceMs = Date.now() - RECONSIDER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const { data: stagedRows, error: stagedError } = await supabase
       .from("gmail_staging")
-      .select("gmail_message_id, internal_date, status, amount, card_last4, payee_email, raw_body")
+      .select("gmail_message_id, internal_date, status, amount, card_last4, payee_email, available_limit, raw_body")
       .eq("status", "success")
       .gte("internal_date", sinceMs)
       .order("internal_date", { ascending: true })

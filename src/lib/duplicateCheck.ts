@@ -9,6 +9,11 @@
 // it. No amount of text matching would have caught that; the bank's own
 // reference number in both copies is identical.
 
+// Relative with the extension, not the "@/" alias: this module is deliberately
+// importable without a bundler - the decision logic is tested against stub
+// lookups under node --test, and that runner does not read tsconfig paths.
+import { extractAvailableLimit, provesDistinct } from "./availableLimit.ts";
+
 // The bank's transaction reference: "UPI:659827785171", "UPI-660093033295-NAME",
 // "UPI Ref. no. 123456789", "IMPS ref 987654321". Nine digits or more, which is
 // short of every real reference seen and long enough not to collide with an
@@ -41,6 +46,12 @@ export interface FingerprintInput {
   payee: string | null;
 }
 
+/** A stored transaction matching the fingerprint, with the figure that can veto it. */
+export interface FingerprintCandidate {
+  id: number;
+  availableLimit: number | null;
+}
+
 /**
  * The two database lookups this module needs. Passed in rather than imported so
  * the decision logic can be tested without a database - the part worth testing
@@ -48,7 +59,7 @@ export interface FingerprintInput {
  */
 export interface DuplicateLookups {
   byReference(reference: string): Promise<CandidateTransaction[]>;
-  byFingerprint(input: FingerprintInput): Promise<number | null>;
+  byFingerprint(input: FingerprintInput): Promise<FingerprintCandidate | null>;
 }
 
 /**
@@ -123,9 +134,9 @@ export async function findExistingCapture(
   // this would match half the table.
   if (input.amount === null || !input.transactionDate) return null;
 
-  let transactionId: number | null = null;
+  let candidate: FingerprintCandidate | null = null;
   try {
-    transactionId = await lookups.byFingerprint({
+    candidate = await lookups.byFingerprint({
       type: input.type,
       amount: input.amount,
       transactionDate: input.transactionDate,
@@ -136,9 +147,35 @@ export async function findExistingCapture(
     console.error("Duplicate check by fingerprint failed:", err);
     return null;
   }
-  if (transactionId === null) return null;
+  if (candidate === null) return null;
+
+  // The veto. Every alert that moves money ends by saying what is left, and two
+  // alerts reporting DIFFERENT figures cannot describe the same movement - so a
+  // fingerprint match with differing limits is two real charges, not a
+  // re-capture. This is the only field that can tell them apart; amount, date,
+  // card and merchant are identical either way.
+  //
+  // Measured against this account's whole history, it separates 23 of the 23
+  // pairs this path would otherwise have collapsed - eleven ₹1 transfers to one
+  // person on one day, thirteen months of identical ₹7,500 investment debits,
+  // and same-day repeat orders from Zepto, Swiggy and Rentomojo. The one
+  // genuine duplicate in the data reports the same figure twice and is
+  // unaffected, and is caught by the reference check above in any case.
+  //
+  // Strictly a veto: equal figures prove nothing, because a re-delivered alert
+  // repeats the figure, and an absent figure proves nothing at all. Both fall
+  // through to the behaviour that was here before.
+  const incomingLimit = extractAvailableLimit(input.message);
+  if (provesDistinct(incomingLimit, candidate.availableLimit)) {
+    console.log(
+      `Fingerprint matched transaction ${candidate.id} but the available limits differ ` +
+        `(${candidate.availableLimit} stored vs ${incomingLimit} incoming); treating as a distinct charge.`
+    );
+    return null;
+  }
+
   return {
-    transactionId,
+    transactionId: candidate.id,
     reason: `same amount, date, card and payee (${input.amount} on ${input.transactionDate})`,
   };
 }

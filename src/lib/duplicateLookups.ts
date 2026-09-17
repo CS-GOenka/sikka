@@ -2,7 +2,7 @@
 // Kept apart from the decision logic so that logic stays importable - and
 // testable - without a database connection.
 import { supabase } from "@/lib/supabase";
-import type { CandidateTransaction, DuplicateLookups, FingerprintInput } from "@/lib/duplicateCheck";
+import type { CandidateTransaction, DuplicateLookups, FingerprintCandidate, FingerprintInput } from "@/lib/duplicateCheck";
 
 interface ReferenceRow {
   id: number;
@@ -23,10 +23,10 @@ export const supabaseDuplicateLookups: DuplicateLookups = {
     return out;
   },
 
-  async byFingerprint(input: FingerprintInput): Promise<number | null> {
+  async byFingerprint(input: FingerprintInput): Promise<FingerprintCandidate | null> {
     let query = supabase
       .from("transactions")
-      .select("id")
+      .select("id, available_limit")
       .eq("type", input.type)
       .eq("amount", input.amount)
       .eq("transaction_date", input.transactionDate);
@@ -36,8 +36,9 @@ export const supabaseDuplicateLookups: DuplicateLookups = {
       : query.is("card_or_account", null);
     query = input.payee ? query.eq("payee", input.payee) : query.is("payee", null);
 
-    const { data, error } = await query.limit(1).returns<{ id: number }[]>();
+    const { data, error } = await query.limit(1).returns<{ id: number; available_limit: number | null }[]>();
     if (error) throw new Error(error.message);
-    return data?.[0]?.id ?? null;
+    const row = data?.[0];
+    return row ? { id: row.id, availableLimit: row.available_limit } : null;
   },
 };

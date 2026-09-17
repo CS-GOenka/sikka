@@ -87,6 +87,7 @@ export interface StagedRow {
   amount: number | null;
   card_last4: string | null;
   payee_email: string | null;
+  available_limit?: number | null;
   raw_body: string | null;
 }
 
@@ -186,6 +187,7 @@ export interface EmailInsertPlan {
   category_id: number | null;
   confidence_source: string | null;
   payment_method: "upi" | "card";
+  available_limit: number | null;
   raw_body: string;
 }
 
@@ -217,6 +219,9 @@ export function planInsert(
     category_id: hit?.category_id ?? null,
     confidence_source: hit?.confidence_source ?? null,
     payment_method: /^UPI[-:\s]*\d/i.test(payeeEmail) ? "upi" : "card",
+    // Already parsed out of the email body at staging time; carried across so an
+    // email-ingested row can veto a later SMS re-capture the same way.
+    available_limit: row.available_limit ?? null,
     raw_body: row.raw_body ?? "",
   };
 }
@@ -262,6 +267,7 @@ export async function insertEmailTransaction(
       amount: plan.amount,
       currency: "INR",
       transaction_date: plan.transaction_date,
+      available_limit: plan.available_limit,
       category_id: plan.category_id,
       needs_category_review: true,
     })

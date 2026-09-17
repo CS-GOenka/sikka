@@ -27,6 +27,8 @@ import {
 function lookups(options: {
   byReference?: Record<string, CandidateTransaction[]>;
   fingerprintHit?: number | null;
+  /** The stored candidate's available limit, for the discriminator. Null unless a test needs it. */
+  fingerprintLimit?: number | null;
   throwOnReference?: boolean;
   throwOnFingerprint?: boolean;
 } = {}): DuplicateLookups & { referenceQueries: string[]; fingerprintQueries: FingerprintInput[] } {
@@ -43,7 +45,9 @@ function lookups(options: {
     async byFingerprint(input) {
       fingerprintQueries.push(input);
       if (options.throwOnFingerprint) throw new Error("simulated lookup failure");
-      return options.fingerprintHit ?? null;
+      return options.fingerprintHit == null
+        ? null
+        : { id: options.fingerprintHit, availableLimit: options.fingerprintLimit ?? null };
     },
   };
 }
@@ -230,5 +234,79 @@ describe("a failed lookup must not block ingest", () => {
       db
     );
     assert.equal(match, null);
+  });
+});
+
+describe("the available-limit veto on the fingerprint path", () => {
+  const SWIPE = (limit: string) =>
+    `INR 340.00 spent using ICICI Bank Card XX2003 on 04-Jan-25 on Zepto. Avl Limit: INR ${limit}`;
+
+  test("differing limits mean two real charges, not a re-capture", async () => {
+    // The 04-Jan-2025 Zepto pair: two ₹340 orders on one day, which amount,
+    // date, card and merchant cannot tell apart. The limits can.
+    const db = lookups({ fingerprintHit: 3226, fingerprintLimit: 107508.04 });
+    const result = await findExistingCapture(
+      { message: SWIPE("1,07,073.04"), manualCapture: true, type: "debit", amount: 340,
+        transactionDate: "2025-01-04", cardOrAccount: "XX2003", payee: "Zepto" },
+      db
+    );
+    assert.equal(result, null);
+  });
+
+  test("equal limits leave the existing behaviour alone", async () => {
+    // A genuine re-delivery repeats the figure, so this must still be caught.
+    const db = lookups({ fingerprintHit: 3226, fingerprintLimit: 107508.04 });
+    const result = await findExistingCapture(
+      { message: SWIPE("1,07,508.04"), manualCapture: true, type: "debit", amount: 340,
+        transactionDate: "2025-01-04", cardOrAccount: "XX2003", payee: "Zepto" },
+      db
+    );
+    assert.equal(result?.transactionId, 3226);
+  });
+
+  test("a missing stored limit vetoes nothing", async () => {
+    // 2,256 of 3,291 rows quote no figure. They must behave exactly as before.
+    const db = lookups({ fingerprintHit: 3226, fingerprintLimit: null });
+    const result = await findExistingCapture(
+      { message: SWIPE("1,07,073.04"), manualCapture: true, type: "debit", amount: 340,
+        transactionDate: "2025-01-04", cardOrAccount: "XX2003", payee: "Zepto" },
+      db
+    );
+    assert.equal(result?.transactionId, 3226);
+  });
+
+  test("a missing incoming limit vetoes nothing", async () => {
+    const db = lookups({ fingerprintHit: 3226, fingerprintLimit: 107508.04 });
+    const result = await findExistingCapture(
+      { message: "INR 340.00 spent using ICICI Bank Card XX2003 on 04-Jan-25 on Zepto.",
+        manualCapture: true, type: "debit", amount: 340,
+        transactionDate: "2025-01-04", cardOrAccount: "XX2003", payee: "Zepto" },
+      db
+    );
+    assert.equal(result?.transactionId, 3226);
+  });
+
+  test("REGRESSION: the veto never reaches the reference path", async () => {
+    // A reference is decisive on its own. Letting a limit overturn it would
+    // resurrect the 16,748 duplicate pair, whose two captures differ only in a
+    // trailing URL and quote the same figure anyway.
+    const db = lookups({ byReference: { "62314678782": [{ id: 5008, type: "debit", amount: 16748 }] } });
+    const result = await findExistingCapture(
+      { message: "Rs 16,748.00 spent on ICICI Bank Card XX7001 on 19-Aug-26 at UPI-62314678782. Avl Lmt: Rs 99,999.00",
+        manualCapture: false, type: "debit", amount: 16748,
+        transactionDate: "2026-08-19", cardOrAccount: "XX7001", payee: "UPI-62314678782" },
+      db
+    );
+    assert.equal(result?.transactionId, 5008);
+  });
+
+  test("the automatic path is still never fingerprinted at all", async () => {
+    const db = lookups({ fingerprintHit: 3226, fingerprintLimit: 107508.04 });
+    const result = await findExistingCapture(
+      { message: SWIPE("1,07,508.04"), manualCapture: false, type: "debit", amount: 340,
+        transactionDate: "2025-01-04", cardOrAccount: "XX2003", payee: "Zepto" },
+      db
+    );
+    assert.equal(result, null);
   });
 });

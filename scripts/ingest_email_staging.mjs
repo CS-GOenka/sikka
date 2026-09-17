@@ -70,7 +70,7 @@ async function selectAll(table, columns, refine = (q) => q) {
   }
 }
 
-const staged = await selectAll("gmail_staging", "gmail_message_id, internal_date, status, amount, card_last4, payee_email, raw_body, quarantine_reason");
+const staged = await selectAll("gmail_staging", "gmail_message_id, internal_date, status, amount, card_last4, payee_email, available_limit, raw_body, quarantine_reason");
 const txns = await selectAll("transactions", "id, payee, note, amount, card_or_account, transaction_date, gmail_message_id, raw_messages(phone_received_at)");
 const cache = await selectAll("merchant_categories", "payee, category_id, confidence_source");
 const cats = await selectAll("categories", "id, name");
