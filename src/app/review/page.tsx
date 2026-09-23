@@ -101,6 +101,7 @@ async function renderReviewPage() {
                 transactionId={row.id}
                 currentCategoryName={row.categories?.name ?? null}
                 categories={categories}
+                payee={row.payee}
               />
               <ReportGapButton transactionId={row.id} />
             </div>

@@ -12,11 +12,15 @@ export function CategoryPicker({
   transactionId,
   currentCategoryName,
   categories,
+  payee,
   compact = false,
 }: {
   transactionId: number;
   currentCategoryName: string | null;
   categories: CategoryOption[];
+  // Shown in the "remember this" offer. Without it the offer is hidden, which
+  // is correct: there is nothing to key a cache entry on.
+  payee?: string | null;
   // Narrow variant for the /transactions table, where this has to share a
   // phone screen with three other columns.
   compact?: boolean;
@@ -28,6 +32,11 @@ export function CategoryPicker({
   // sending the page back. Null means "whatever the server last said".
   const [saved, setSaved] = useState<string | null>(null);
   const shown = saved ?? currentCategoryName;
+  // The correction that just landed, and which is therefore still offerable as
+  // a rule. Cleared once the offer is taken or the category changes again.
+  const [offer, setOffer] = useState<string | null>(null);
+  const [offerState, setOfferState] = useState<"idle" | "saving" | "done" | "declined">("idle");
+  const [offerNote, setOfferNote] = useState<string | null>(null);
 
   // "Ignore" is an action (dismiss from the review queue), not a spending
   // category - kept out of the alphabetical group list and pinned to its
@@ -50,6 +59,8 @@ export function CategoryPicker({
     setPending(true);
     setError(null);
     try {
+      // Scope defaults to this transaction alone. Teaching the cache is a
+      // second, explicit act - see the offer below.
       await setTransactionCategory(transactionId, category);
       // The write is what the user is waiting on; the refresh is not. It used
       // to be both: `pending` was only ever cleared on the error path, so the
@@ -62,6 +73,9 @@ export function CategoryPicker({
       // queue once it is categorised, and the dashboard's totals move.
       setSaved(category);
       setPending(false);
+      setOffer(payee?.trim() ? category : null);
+      setOfferState("idle");
+      setOfferNote(null);
       // The refresh has to be marked non-urgent explicitly. router.refresh()
       // schedules a transition of its own, and React will happily hold the two
       // urgent updates above inside it - which put the control right back to
@@ -73,6 +87,22 @@ export function CategoryPicker({
       setError(err instanceof Error ? err.message : "Failed to save category");
       setSaved(null);
       setPending(false);
+      setOffer(null);
+    }
+  }
+
+  async function rememberForPayee() {
+    if (!offer) return;
+    setOfferState("saving");
+    try {
+      const result = await setTransactionCategory(transactionId, offer, { applyToPayee: true });
+      // The server decides whether a category is learnable at all, so the UI
+      // reports what happened rather than asserting what it asked for.
+      setOfferState(result.learned ? "done" : "declined");
+      setOfferNote(result.notLearnedReason ?? null);
+    } catch (err) {
+      setOfferState("idle");
+      setError(err instanceof Error ? err.message : "Failed to save rule");
     }
   }
 
@@ -110,6 +140,25 @@ export function CategoryPicker({
         )}
       </div>
       {error && <span className="text-xs text-red-600">{error}</span>}
+      {offer && !error && (
+        <span className="text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
+          {offerState === "idle" && (
+            <>
+              Saved for this one.{" "}
+              <button
+                type="button"
+                onClick={rememberForPayee}
+                className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200"
+              >
+                Always use {offer} for {payee?.trim()}
+              </button>
+            </>
+          )}
+          {offerState === "saving" && "Saving rule…"}
+          {offerState === "done" && `Future ${payee?.trim()} transactions will use ${offer}.`}
+          {offerState === "declined" && (offerNote ?? "Saved for this transaction only.")}
+        </span>
+      )}
     </div>
   );
 }

@@ -39,6 +39,38 @@ export type CategorizeSource =
   | "person_match_unconfirmed"
   | "no_payee";
 
+/**
+ * What gets stored in transactions.category_source.
+ *
+ * Coarser than CategorizeSource on purpose. The internal value distinguishes
+ * why a category was NOT assigned (llm_uncertain, no_payee, the two
+ * unconfirmed paths), which matters to the caller and to logs; the column only
+ * has to answer one question later - did a person choose this, or did it
+ * arrive by inheritance? So every route that ends with no category stores
+ * null, because nothing was assigned and naming a source for an absence would
+ * be a lie.
+ *
+ * person_match_unconfirmed maps to 'cache': it inherits a category from a
+ * manually-confirmed entry under a DIFFERENT payee string, which is
+ * inheritance by any useful definition even though no merchant_categories row
+ * is read or written.
+ */
+export type StoredCategorySource = "manual" | "cache" | "rule" | "llm";
+
+export function storedCategorySource(
+  source: CategorizeSource,
+  categoryId: number | null
+): StoredCategorySource | null {
+  if (categoryId === null) return null;
+  switch (source) {
+    case "hardcoded": return "rule";
+    case "cache": return "cache";
+    case "person_match_unconfirmed": return "cache";
+    case "llm": return "llm";
+    default: return null;
+  }
+}
+
 export interface CategorizeOutcome {
   id: number;
   payee: string | null;
@@ -164,7 +196,7 @@ export async function categorizeTransaction(row: {
   if (isSelfTransfer(payee)) {
     const { error: updateError } = await supabase
       .from("transactions")
-      .update({ category_id: null, needs_category_review: false, is_transfer: true })
+      .update({ category_id: null, needs_category_review: false, is_transfer: true, category_source: null })
       .eq("id", row.id);
     if (updateError) {
       console.error(`Failed to mark self-transfer for transaction ${row.id}:`, updateError);
@@ -277,10 +309,15 @@ export async function categorizeTransaction(row: {
   // and, worse, invisible in /review. needs_category_review now also
   // defaults to true at the DB level as a second layer of defense, but a
   // retry means most transient failures never need that fallback at all.
-  let updateError = (await supabase.from("transactions").update({ category_id: categoryId, needs_category_review: needsReview }).eq("id", row.id)).error;
+  const patch = {
+    category_id: categoryId,
+    needs_category_review: needsReview,
+    category_source: storedCategorySource(source, categoryId),
+  };
+  let updateError = (await supabase.from("transactions").update(patch).eq("id", row.id)).error;
   if (updateError) {
     console.error(`Failed to save category for transaction ${row.id}, retrying once:`, updateError);
-    updateError = (await supabase.from("transactions").update({ category_id: categoryId, needs_category_review: needsReview }).eq("id", row.id)).error;
+    updateError = (await supabase.from("transactions").update(patch).eq("id", row.id)).error;
   }
 
   if (updateError) {

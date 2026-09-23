@@ -147,6 +147,7 @@ export function TransactionRow({
               transactionId={row.id}
               currentCategoryName={row.categoryName}
               categories={categories}
+              payee={row.payee}
               compact
             />
           )}

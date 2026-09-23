@@ -43,6 +43,10 @@ export function TransactionDetail({
   const [error, setError] = useState<string | null>(null);
   const [categoryPending, setCategoryPending] = useState(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
+  // The correction that just landed and is still offerable as a rule.
+  const [ruleOffer, setRuleOffer] = useState<string | null>(null);
+  const [ruleState, setRuleState] = useState<"idle" | "saving" | "done" | "declined">("idle");
+  const [ruleNote, setRuleNote] = useState<string | null>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -57,17 +61,40 @@ export function TransactionDetail({
     setCategoryPending(true);
     setCategoryError(null);
     try {
+      // This transaction only. Teaching the merchant cache is a separate,
+      // explicit act - the offer below.
       await setTransactionCategory(txn.id, next);
       setCategory(next);
       // The server clears the review flag as part of recategorising, so the
       // button here has to follow or the two would disagree on screen.
       setStarred(false);
+      setRuleOffer(txn.payee?.trim() ? next : null);
+      setRuleState("idle");
+      setRuleNote(null);
       router.refresh();
     } catch (err) {
       console.error("Failed to change category:", err);
       setCategoryError(err instanceof Error ? err.message : "Couldn't save that.");
+      setRuleOffer(null);
     } finally {
       setCategoryPending(false);
+    }
+  }
+
+  async function rememberForPayee() {
+    if (!ruleOffer) return;
+    setRuleState("saving");
+    try {
+      const result = await setTransactionCategory(txn.id, ruleOffer, { applyToPayee: true });
+      // Whether a category is learnable at all is the server's call, so this
+      // reports what happened rather than what was asked for.
+      setRuleState(result.learned ? "done" : "declined");
+      setRuleNote(result.notLearnedReason ?? null);
+      router.refresh();
+    } catch (err) {
+      console.error("Failed to save rule:", err);
+      setRuleState("idle");
+      setCategoryError(err instanceof Error ? err.message : "Couldn't save that rule.");
     }
   }
 
@@ -138,9 +165,8 @@ export function TransactionDetail({
           {amount}
         </p>
 
-        {/* The same correction path as /review: it updates the transaction and
-            upserts merchant_categories as a manual override, so future
-            transactions from this payee inherit it. */}
+        {/* The same correction path as /review. It corrects THIS transaction;
+            applying it to the payee is a second, opt-in step below. */}
         <div className="mt-5">
           <label
             htmlFor={`category-${txn.id}`}
@@ -173,11 +199,30 @@ export function TransactionDetail({
           </select>
           <p className="mt-1.5 text-[0.6875rem] text-[var(--sk-ink-3)]">
             {categoryError ??
-              (categoryPending
-                ? "Saving…"
-                : txn.payee?.trim()
-                  ? `Future ${txn.payee.trim()} transactions will use this too.`
-                  : "This transaction only - no payee to remember it against.")}
+              (categoryPending ? (
+                "Saving…"
+              ) : ruleOffer && ruleState === "idle" ? (
+                <>
+                  Saved for this one.{" "}
+                  <button
+                    type="button"
+                    onClick={rememberForPayee}
+                    className="underline underline-offset-2"
+                  >
+                    Always use {ruleOffer} for {txn.payee?.trim()}
+                  </button>
+                </>
+              ) : ruleState === "saving" ? (
+                "Saving rule…"
+              ) : ruleState === "done" ? (
+                `Future ${txn.payee?.trim()} transactions will use ${ruleOffer}.`
+              ) : ruleState === "declined" ? (
+                ruleNote ?? "Saved for this transaction only."
+              ) : txn.payee?.trim() ? (
+                "Changes apply to this transaction only."
+              ) : (
+                "This transaction only - no payee to remember it against."
+              ))}
           </p>
         </div>
 
