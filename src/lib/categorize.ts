@@ -2,33 +2,11 @@ import { supabase } from "@/lib/supabase";
 import { categorizeMerchant } from "@/lib/gemini";
 import { payeeKey } from "@/lib/payeeKey";
 
-const INVESTMENT_PAYEE_MARKERS = ["zerodha", "groww", "upstox", "angelone", "angel one"];
-
-export function isInvestmentTransaction(row: {
-  payment_method: string;
-  note: string | null;
-  payee: string | null;
-}): boolean {
-  if (row.payment_method === "ach" && row.note && /nse\s*cleari/i.test(row.note)) {
-    return true;
-  }
-  if (row.payee) {
-    const lower = row.payee.toLowerCase();
-    if (INVESTMENT_PAYEE_MARKERS.some((marker) => lower.includes(marker))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Own-name transfers between the account holder's own accounts - never
-// real spend, regardless of category.
-const SELF_TRANSFER_NAMES = ["saurabh goenka"];
-
-export function isSelfTransfer(payee: string | null): boolean {
-  if (!payee) return false;
-  return SELF_TRANSFER_NAMES.includes(payee.trim().toLowerCase());
-}
+// The pure rules live in categoryRules.ts so a script can import them without
+// dragging in the Supabase and Gemini clients. Re-exported here because this is
+// where every existing caller looks for them.
+import { isInvestmentTransaction, isPaanShop, isSelfTransfer } from "./categoryRules.ts";
+export { isInvestmentTransaction, isPaanShop, isSelfTransfer };
 
 export type CategorizeSource =
   | "hardcoded"
@@ -106,14 +84,6 @@ async function getIndulgenceCategoryId(): Promise<number> {
   }
   indulgenceCategoryIdCache = data.id;
   return data.id;
-}
-
-// Paan shops ("<name> Pan Shop", truncated to "Pan Sh") are an Indulgence.
-// Matched on the whole word "pan" followed by "sh(op)" so it catches the shops
-// without misfiring on people like "Pankaj", "Pritee Pandey" or "Shruti Panda".
-export function isPaanShop(payee: string | null): boolean {
-  if (!payee) return false;
-  return /\bpan\s+sh/i.test(payee);
 }
 
 let personToPersonCategoryIdsCache: Set<number> | null = null;

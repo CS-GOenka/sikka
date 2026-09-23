@@ -22,7 +22,7 @@
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import { payeeKey } from "../src/lib/payeeKey.ts";
-import { isPaanShop, isInvestmentTransaction } from "../src/lib/categorize.ts";
+import { isPaanShop, isInvestmentTransaction } from "../src/lib/categoryRules.ts";
 
 const env = Object.fromEntries(
   fs.readFileSync(".env.local", "utf8").split("\n")
